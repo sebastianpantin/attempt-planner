@@ -166,7 +166,7 @@ impl fmt::Display for InputProblem {
             }
             Self::InvalidDayForm => write!(
                 f,
-                "day-form spread must be between 0 and {} and correlation between 0 and 1",
+                "day-form spread and max uncertainty must be at least 0 and combine to at most {}, and correlation must be between 0 and 1",
                 DayForm::MAX_SPREAD
             ),
             Self::SimulationsOutOfRange => {
@@ -525,6 +525,7 @@ mod tests {
                 }),
                 day_form: DayForm {
                     spread: 0.0,
+                    max_uncertainty: 0.0,
                     correlation: 0.5,
                 },
             },
@@ -791,7 +792,7 @@ mod tests {
                 "attempt 1 is lighter than the 20 kg bar",
                 "expected max is lighter than the 20 kg bar",
                 "make-rate curve needs a positive, finite midpoint and steepness, and a technical-miss chance from 0 to below 1",
-                "day-form spread must be between 0 and 0.5 and correlation between 0 and 1",
+                "day-form spread and max uncertainty must be at least 0 and combine to at most 0.5, and correlation must be between 0 and 1",
                 "simulations must be between 1 and 1000000",
             ]
         );

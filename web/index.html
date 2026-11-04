@@ -61,9 +61,25 @@
             <summary>Advanced</summary>
             <fieldset>
               <legend>Day form</legend>
+              <p class="hint">
+                The day max varies around the expected max for two reasons:
+                strength moves from day to day, and the expected max itself may
+                be off. Lower the uncertainty if the max comes from a recent
+                test or meet.
+              </p>
               <label>
-                Spread of the day max
+                Day-to-day spread
                 <input name="spreadPercent" type="number" min="0" step="0.5" />
+                %
+              </label>
+              <label>
+                Uncertainty of the expected max
+                <input
+                  name="maxUncertaintyPercent"
+                  type="number"
+                  min="0"
+                  step="0.5"
+                />
                 %
               </label>
               <label>

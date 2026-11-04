@@ -30,6 +30,7 @@ const LIFT_FIELDS = [
 const MEET_FIELDS = [
   "goalKg",
   "spreadPercent",
+  "maxUncertaintyPercent",
   "correlation",
   "bombOutCapPercent",
 ] as const;
@@ -72,6 +73,7 @@ export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
       })),
       dayForm: {
         spread: values.spreadPercent / 100,
+        maxUncertainty: values.maxUncertaintyPercent / 100,
         correlation: values.correlation,
       },
     },
@@ -146,7 +148,7 @@ const PROBLEM_LIFT_FIELDS: Partial<Record<InputField, LiftField[]>> = {
 
 const PROBLEM_MEET_FIELDS: Partial<Record<InputField, MeetField[]>> = {
   goal: ["goalKg"],
-  dayForm: ["spreadPercent", "correlation"],
+  dayForm: ["spreadPercent", "maxUncertaintyPercent", "correlation"],
   bombOutCap: ["bombOutCapPercent"],
 };
 
