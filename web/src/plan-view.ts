@@ -30,12 +30,10 @@ export function ladder(plan: LiftPlanKg, expectedMaxKg: number): Ladder {
       ? `${wholePercent(share)} of your max`
       : "";
   const tree = attemptTree(plan);
-  const made = tree?.afterMake;
-  const missed = tree?.afterMiss;
-  if (!tree || !made?.afterMake || !made.afterMiss || !missed?.afterMake) {
+  if (!tree) {
     return { secondKg: "–", thirdKg: "–", shareOfMax, line: "", paths: [] };
   }
-  const opener = tree.weightKg;
+  const { weightKg: opener, afterMake: made, afterMiss: missed } = tree;
   const allMade = path(opener, made.weightKg, made.afterMake.weightKg);
   return {
     secondKg: weight(made.weightKg),

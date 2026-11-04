@@ -9,7 +9,7 @@ import type {
   Setting,
   TotalShare,
 } from "../../pkg/attempt_sim_wasm.js";
-import { attemptTree } from "../attempt-tree.ts";
+import { type AttemptNode, attemptTree } from "../attempt-tree.ts";
 import { kg, LIFT_NAMES, percent, roundChanceUp, weight } from "../format.ts";
 import { LIFTS } from "../inputs.ts";
 import type { KnownGoal } from "../outcome.ts";
@@ -218,7 +218,7 @@ export interface PathRow {
 /** The weights a path's attempts were taken at, empty while the plan is unknown. */
 export function pathWeights(plan: LiftPlanKg | undefined, made: boolean[]) {
   const weights: number[] = [];
-  let node = plan && attemptTree(plan);
+  let node: AttemptNode | undefined = plan && attemptTree(plan);
   for (const [index, wasMade] of made.entries()) {
     if (!node) return [];
     weights[index] = node.weightKg;
