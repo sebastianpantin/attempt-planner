@@ -195,6 +195,40 @@ pub struct LiftSummary {
     pub strength_miss_rate: f64,
     /// Share of attempts missed whatever the load, for example on depth or a command.
     pub technical_miss_rate: f64,
+    /// Chance of making each attempt, in order.
+    pub attempt_make_probabilities: [f64; ATTEMPTS_PER_LIFT],
+    /// Chance of missing all three attempts with at least one of them a technical miss.
+    pub technical_bomb_out_probability: f64,
+    /// Every way the three attempts can go, most likely first.
+    pub paths: [AttemptPath; PATHS],
+}
+
+/// One way a lift's three attempts can go, and how often it happened.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+pub struct AttemptPath {
+    /// Whether each attempt was made, in order.
+    pub made: [bool; ATTEMPTS_PER_LIFT],
+    /// The best made attempt on this path. Absent when every attempt is missed.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
+    pub best_kg: Option<f64>,
+    pub share: f64,
+}
+
+/// How many ways three attempts can go.
+pub const PATHS: usize = 1 << ATTEMPTS_PER_LIFT;
+
+/// How often one total came up, counting a bomb-out as 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+pub struct TotalShare {
+    pub total_kg: f64,
+    pub share: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -220,7 +254,7 @@ pub struct StandardErrors {
     pub expected_total_kg: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
@@ -238,6 +272,8 @@ pub struct Evaluation {
     pub expected_total_without_bomb_out_kg: Option<f64>,
     /// Percentiles of the total, counting a bomb-out as 0.
     pub total_percentiles_kg: Percentiles,
+    /// Every total that came up, from the lowest, with how often. A bomb-out is a total of 0.
+    pub totals: Vec<TotalShare>,
     pub standard_errors: StandardErrors,
     pub lifts: PerLift<LiftSummary>,
 }
@@ -328,7 +364,7 @@ impl MeetDays {
             let attempts = plans.map(|lift, plan| plan.attempts(*day.make_thresholds_kg.get(lift)));
             tally.record(&attempts, &day.technical_misses);
         }
-        Ok(tally.finish(goal))
+        Ok(tally.finish(plans, goal))
     }
 }
 
@@ -361,7 +397,7 @@ fn setup_problems(lifter: &Lifter, simulations: u32) -> Vec<InputProblem> {
     problems
 }
 
-fn plan_problems(plans: &PerLift<LiftPlan>) -> Vec<InputProblem> {
+pub(crate) fn plan_problems(plans: &PerLift<LiftPlan>) -> Vec<InputProblem> {
     plans
         .iter()
         .flat_map(|(lift, plan)| {
@@ -383,6 +419,19 @@ struct Tally {
     bests: PerLift<Vec<Weight>>,
     strength_misses: PerLift<u32>,
     technical_misses: PerLift<u32>,
+    /// How often each path came up, indexed by `path_index`.
+    paths: PerLift<[u32; PATHS]>,
+    technical_bomb_outs: PerLift<u32>,
+}
+
+/// Bit `i` is set when attempt `i` was made.
+fn path_index(attempts: &[Attempt; ATTEMPTS_PER_LIFT]) -> usize {
+    attempts
+        .iter()
+        .enumerate()
+        .filter(|(_, attempt)| attempt.made)
+        .map(|(i, _)| 1 << i)
+        .sum()
 }
 
 impl Tally {
@@ -392,6 +441,8 @@ impl Tally {
             bests: PerLift::from_fn(|_| Vec::new()),
             strength_misses: PerLift::from_fn(|_| 0),
             technical_misses: PerLift::from_fn(|_| 0),
+            paths: PerLift::from_fn(|_| [0; PATHS]),
+            technical_bomb_outs: PerLift::from_fn(|_| 0),
         }
     }
 
@@ -414,15 +465,21 @@ impl Tally {
         }
         let bests = attempts.map(|_, attempts| best_attempt(attempts));
         for (lift, best) in bests.iter() {
-            if let Some(best) = best {
-                self.bests.get_mut(lift).push(*best);
+            let path = path_index(attempts.get(lift));
+            self.paths.get_mut(lift)[path] += 1;
+            match best {
+                Some(best) => self.bests.get_mut(lift).push(*best),
+                None if technical_misses.get(lift).contains(&true) => {
+                    *self.technical_bomb_outs.get_mut(lift) += 1;
+                }
+                None => {}
             }
         }
         let total = bests.iter().map(|(_, best)| *best).sum::<Option<Weight>>();
         self.totals.push(total.unwrap_or(Weight::ZERO));
     }
 
-    fn finish(mut self, goal: Option<Weight>) -> Evaluation {
+    fn finish(mut self, plans: &PerLift<LiftPlan>, goal: Option<Weight>) -> Evaluation {
         self.totals.sort_unstable();
         for lift in Lift::ALL {
             self.bests.get_mut(lift).sort_unstable();
@@ -443,6 +500,13 @@ impl Tally {
         });
         let proportion_error = |p: f64| (p * (1.0 - p) / runs).sqrt();
         let percentile = |quantile: f64| nearest_rank(totals, quantile).kg();
+        let shares = totals
+            .chunk_by(|a, b| a == b)
+            .map(|same| TotalShare {
+                total_kg: same[0].kg(),
+                share: same.len() as f64 / runs,
+            })
+            .collect();
 
         Evaluation {
             bomb_out_probability,
@@ -455,6 +519,7 @@ impl Tally {
                 p50: percentile(0.5),
                 p90: percentile(0.9),
             },
+            totals: shares,
             standard_errors: StandardErrors {
                 bomb_out_probability: proportion_error(bomb_out_probability),
                 goal_probability: goal_probability.map(proportion_error),
@@ -462,15 +527,47 @@ impl Tally {
             },
             lifts: self.bests.map(|lift, bests| {
                 let attempts = runs * ATTEMPTS_PER_LIFT as f64;
+                let paths = attempt_paths(plans.get(lift), self.paths.get(lift), runs);
                 LiftSummary {
                     make_probability: bests.len() as f64 / runs,
                     median_best_kg: (!bests.is_empty()).then(|| nearest_rank(bests, 0.5).kg()),
                     strength_miss_rate: f64::from(*self.strength_misses.get(lift)) / attempts,
                     technical_miss_rate: f64::from(*self.technical_misses.get(lift)) / attempts,
+                    attempt_make_probabilities: std::array::from_fn(|attempt| {
+                        paths
+                            .iter()
+                            .filter(|p| p.made[attempt])
+                            .map(|p| p.share)
+                            .sum()
+                    }),
+                    technical_bomb_out_probability: f64::from(*self.technical_bomb_outs.get(lift))
+                        / runs,
+                    paths,
                 }
             }),
         }
     }
+}
+
+/// Every way the plan's three attempts can go, with how often each came up, most likely first.
+fn attempt_paths(plan: &LiftPlan, counts: &[u32; PATHS], runs: f64) -> [AttemptPath; PATHS] {
+    let mut paths: [AttemptPath; PATHS] = std::array::from_fn(|path| {
+        let made = std::array::from_fn(|attempt| path & (1 << attempt) != 0);
+        let certain = made.map(|made| {
+            if made {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            }
+        });
+        AttemptPath {
+            made,
+            best_kg: best_attempt(&plan.attempts(certain)).map(Weight::kg),
+            share: f64::from(counts[path]) / runs,
+        }
+    });
+    paths.sort_by(|a, b| b.share.total_cmp(&a.share));
+    paths
 }
 
 /// The nearest-rank quantile of sorted, non-empty weights.
@@ -562,6 +659,86 @@ mod tests {
         assert_eq!((p.p10, p.p50, p.p90), (550.0, 550.0, 550.0));
         assert_eq!(result.standard_errors.expected_total_kg, 0.0);
         assert_eq!(result.standard_errors.bomb_out_probability, 0.0);
+    }
+
+    #[test]
+    fn a_certain_day_has_one_total_and_one_path_per_lift() {
+        let result = evaluate(&certain_meet()).unwrap();
+        assert_eq!(
+            result.totals,
+            [TotalShare {
+                total_kg: 550.0,
+                share: 1.0
+            }]
+        );
+        let squat = result.lifts.squat;
+        assert_eq!(squat.attempt_make_probabilities, [1.0, 1.0, 0.0]);
+        assert_eq!(
+            squat.paths[0],
+            AttemptPath {
+                made: [true, true, false],
+                best_kg: Some(190.0),
+                share: 1.0
+            }
+        );
+        let all_made = squat.paths.iter().find(|p| p.made == [true; 3]).unwrap();
+        assert_eq!((all_made.best_kg, all_made.share), (Some(205.0), 0.0));
+        let none_made = squat.paths.iter().find(|p| p.made == [false; 3]).unwrap();
+        assert_eq!(none_made.best_kg, None);
+    }
+
+    #[test]
+    fn a_bomb_out_is_a_total_of_zero() {
+        let mut meet = certain_meet();
+        meet.plans.bench = plan(140.0, 5.0, 5.0);
+        let result = evaluate(&meet).unwrap();
+        assert_eq!(
+            result.totals,
+            [TotalShare {
+                total_kg: 0.0,
+                share: 1.0
+            }]
+        );
+        assert_eq!(result.lifts.bench.technical_bomb_out_probability, 0.0);
+    }
+
+    #[test]
+    fn counts_bomb_outs_with_a_technical_miss() {
+        let mut meet = certain_meet();
+        meet.lifter.lifts.bench.curve.technical_miss_chance = 0.6;
+        let bench = evaluate(&meet).unwrap().lifts.bench;
+        let bomb_out = 1.0 - bench.make_probability;
+        assert!((bomb_out - 0.6f64.powi(3)).abs() < 0.03, "{bench:?}");
+        assert!((bench.technical_bomb_out_probability - bomb_out).abs() < 1e-9);
+    }
+
+    #[test]
+    fn shares_add_up_and_agree_with_each_other() {
+        let result = evaluate(&uncertain_meet(20.0, 0.05)).unwrap();
+        let total_share: f64 = result.totals.iter().map(|t| t.share).sum();
+        assert!((total_share - 1.0).abs() < 1e-9);
+        assert!(
+            result
+                .totals
+                .windows(2)
+                .all(|w| w[0].total_kg < w[1].total_kg)
+        );
+        for (_, lift) in result.lifts.iter() {
+            assert!(lift.paths.windows(2).all(|w| w[0].share >= w[1].share));
+            let path_share: f64 = lift.paths.iter().map(|p| p.share).sum();
+            assert!((path_share - 1.0).abs() < 1e-9);
+            for attempt in 0..ATTEMPTS_PER_LIFT {
+                let made: f64 = lift
+                    .paths
+                    .iter()
+                    .filter(|p| p.made[attempt])
+                    .map(|p| p.share)
+                    .sum();
+                assert!((made - lift.attempt_make_probabilities[attempt]).abs() < 1e-9);
+            }
+            let missed_all = lift.paths.iter().find(|p| p.made == [false; 3]).unwrap();
+            assert!((missed_all.share - (1.0 - lift.make_probability)).abs() < 1e-9);
+        }
     }
 
     #[test]

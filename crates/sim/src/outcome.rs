@@ -10,6 +10,11 @@ pub struct Outcome {
     pub goal_probability: Option<f64>,
 }
 
+/// A bomb-out cap is a chance from 0 to 1, or none.
+pub(crate) fn is_valid_bomb_out_cap(cap: Option<f64>) -> bool {
+    cap.is_none_or(|cap| (0.0..=1.0).contains(&cap))
+}
+
 /// Counts meet totals into an [`Outcome`] without keeping every total.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct OutcomeTally {
