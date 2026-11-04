@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
-use attempt_sim_wasm::dto::EvaluateRequest;
-use attempt_sim_wasm::evaluate;
+use attempt_sim_wasm::dto::{EvaluateRequest, TradeoffRequest};
+use attempt_sim_wasm::{evaluate, tradeoff};
 use js_sys::JSON;
 use tsify::Ts;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -67,4 +67,22 @@ fn returns_problems_for_an_invalid_plan() {
 #[wasm_bindgen_test]
 fn throws_on_input_of_the_wrong_shape() {
     assert!(evaluate(parse(r#"{"plans": 3}"#)).is_err());
+}
+
+#[wasm_bindgen_test]
+fn sweeps_the_plan_family_with_camel_case_fields() {
+    let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "goalKg": 550"#);
+    let response = tradeoff(Ts::<TradeoffRequest>::new_unchecked(
+        JSON::parse(&request).unwrap(),
+    ))
+    .unwrap();
+    let json: String = JSON::stringify(&response.js_value()).unwrap().into();
+    assert!(
+        json.starts_with(
+            r#"{"kind":"swept","points":[{"shape":{"openerPercent":85,"secondPercent":93,"thirdPercent":97},"plans":{"squat":{"openerKg":170,"second":{"afterMakeKg":15,"afterMissKg":0}"#
+        ),
+        "{json}"
+    );
+    assert!(json.contains(r#""onFrontier":true"#), "{json}");
+    assert!(json.contains(r#""bestForGoal":"#), "{json}");
 }

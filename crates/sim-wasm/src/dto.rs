@@ -5,6 +5,7 @@ use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::plan::{Jumps, LiftPlan};
 use attempt_sim::rules::Weight;
+use attempt_sim::tradeoff::{self, PlanShape, TradeoffInput};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
@@ -22,26 +23,26 @@ pub struct LifterInput {
     pub day_form: DayForm,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Tsify)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Tsify)]
 #[serde(rename_all = "camelCase")]
-pub struct JumpsInput {
+pub struct JumpsKg {
     pub after_make_kg: f64,
     pub after_miss_kg: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Tsify)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Tsify)]
 #[serde(rename_all = "camelCase")]
-pub struct LiftPlanInput {
+pub struct LiftPlanKg {
     pub opener_kg: f64,
-    pub second: JumpsInput,
-    pub third: JumpsInput,
+    pub second: JumpsKg,
+    pub third: JumpsKg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 pub struct EvaluateRequest {
     pub lifter: LifterInput,
-    pub plans: PerLift<LiftPlanInput>,
+    pub plans: PerLift<LiftPlanKg>,
     #[serde(default)]
     #[tsify(optional)]
     pub goal_kg: Option<f64>,
@@ -49,6 +50,64 @@ pub struct EvaluateRequest {
     /// 32 bits rather than the engine's 64, because a JavaScript number cannot hold every
     /// 64-bit integer exactly.
     pub seed: u32,
+}
+
+impl From<Jumps> for JumpsKg {
+    fn from(jumps: Jumps) -> Self {
+        Self {
+            after_make_kg: jumps.after_make.kg(),
+            after_miss_kg: jumps.after_miss.kg(),
+        }
+    }
+}
+
+impl From<LiftPlan> for LiftPlanKg {
+    fn from(plan: LiftPlan) -> Self {
+        Self {
+            opener_kg: plan.opener.kg(),
+            second: plan.second.into(),
+            third: plan.third.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeoffRequest {
+    pub lifter: LifterInput,
+    #[serde(default)]
+    #[tsify(optional)]
+    pub goal_kg: Option<f64>,
+    pub simulations: u32,
+    pub seed: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeoffPoint {
+    pub shape: PlanShape,
+    pub plans: PerLift<LiftPlanKg>,
+    pub bomb_out_probability: f64,
+    pub expected_total_kg: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub goal_probability: Option<f64>,
+    /// No other plan in the family has a lower or equal bomb-out chance and a higher
+    /// expected total.
+    pub on_frontier: bool,
+}
+
+impl From<tradeoff::TradeoffPoint> for TradeoffPoint {
+    fn from(point: tradeoff::TradeoffPoint) -> Self {
+        Self {
+            shape: point.shape,
+            plans: point.plans.map(|_, &plan| plan.into()),
+            bomb_out_probability: point.bomb_out_probability,
+            expected_total_kg: point.expected_total_kg,
+            goal_probability: point.goal_probability,
+            on_frontier: point.on_frontier,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Tsify)]
@@ -94,17 +153,76 @@ pub fn evaluate(request: &EvaluateRequest) -> EvaluateResponse {
     }
 }
 
-fn to_input(request: &EvaluateRequest) -> Result<EvaluateInput, Vec<InputProblem>> {
+#[derive(Debug, Clone, PartialEq, Serialize, Tsify)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum TradeoffResponse {
+    Swept {
+        points: Vec<TradeoffPoint>,
+        /// Index into `points` of the plan with the best chance of reaching the goal.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[tsify(optional)]
+        best_for_goal: Option<u32>,
+    },
+    Invalid {
+        problems: Vec<Problem>,
+    },
+}
+
+/// Converts the request, sweeps the plan family and returns its points or every problem.
+pub fn tradeoff(request: &TradeoffRequest) -> TradeoffResponse {
+    match to_tradeoff_input(request).and_then(|input| tradeoff::tradeoff(&input)) {
+        Ok(result) => TradeoffResponse::Swept {
+            points: result.points.into_iter().map(TradeoffPoint::from).collect(),
+            best_for_goal: result.best_for_goal.and_then(|i| u32::try_from(i).ok()),
+        },
+        Err(problems) => TradeoffResponse::Invalid {
+            problems: problems.into_iter().map(Problem::from).collect(),
+        },
+    }
+}
+
+fn to_tradeoff_input(request: &TradeoffRequest) -> Result<TradeoffInput, Vec<InputProblem>> {
     let mut problems = Vec::new();
-    let lifts = request.lifter.lifts.map(|lift, model| LiftModel {
+    let lifter = read_lifter(&mut problems, &request.lifter);
+    let goal = read_goal(&mut problems, request.goal_kg);
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    Ok(TradeoffInput {
+        lifter,
+        goal,
+        simulations: request.simulations,
+        seed: u64::from(request.seed),
+    })
+}
+
+fn read_lifter(problems: &mut Vec<InputProblem>, lifter: &LifterInput) -> Lifter {
+    let lifts = lifter.lifts.map(|lift, model| LiftModel {
         expected_max: read_weight(
-            &mut problems,
+            problems,
             model.expected_max_kg,
             Some(lift),
             InputField::ExpectedMax,
         ),
         curve: model.curve,
     });
+    Lifter {
+        lifts,
+        day_form: lifter.day_form,
+    }
+}
+
+fn read_goal(problems: &mut Vec<InputProblem>, goal_kg: Option<f64>) -> Option<Weight> {
+    goal_kg.map(|kg| read_weight(problems, kg, None, InputField::Goal))
+}
+
+fn to_input(request: &EvaluateRequest) -> Result<EvaluateInput, Vec<InputProblem>> {
+    let mut problems = Vec::new();
+    let lifter = read_lifter(&mut problems, &request.lifter);
     let plans = request.plans.map(|lift, plan| {
         let opener = read_weight(
             &mut problems,
@@ -112,7 +230,7 @@ fn to_input(request: &EvaluateRequest) -> Result<EvaluateInput, Vec<InputProblem
             Some(lift),
             InputField::Opener,
         );
-        let mut jumps = |input: JumpsInput, field| Jumps {
+        let mut jumps = |input: JumpsKg, field| Jumps {
             after_make: read_weight(&mut problems, input.after_make_kg, Some(lift), field),
             after_miss: read_weight(&mut problems, input.after_miss_kg, Some(lift), field),
         };
@@ -122,18 +240,12 @@ fn to_input(request: &EvaluateRequest) -> Result<EvaluateInput, Vec<InputProblem
             third: jumps(plan.third, InputField::Third),
         }
     });
-    let goal = request
-        .goal_kg
-        .map(|kg| read_weight(&mut problems, kg, None, InputField::Goal));
-
+    let goal = read_goal(&mut problems, request.goal_kg);
     if !problems.is_empty() {
         return Err(problems);
     }
     Ok(EvaluateInput {
-        lifter: Lifter {
-            lifts,
-            day_form: request.lifter.day_form,
-        },
+        lifter,
         plans,
         goal,
         simulations: request.simulations,
@@ -157,8 +269,8 @@ fn read_weight(
 mod tests {
     use super::*;
 
-    fn jumps(after_make_kg: f64, after_miss_kg: f64) -> JumpsInput {
-        JumpsInput {
+    fn jumps(after_make_kg: f64, after_miss_kg: f64) -> JumpsKg {
+        JumpsKg {
             after_make_kg,
             after_miss_kg,
         }
@@ -172,7 +284,7 @@ mod tests {
                 steepness: 1_000.0,
             },
         };
-        let plan = |opener_kg, second, third| LiftPlanInput {
+        let plan = |opener_kg, second, third| LiftPlanKg {
             opener_kg,
             second: jumps(second, 0.0),
             third: jumps(third, 0.0),
@@ -313,6 +425,79 @@ mod tests {
                 invalid(Some(Lift::Bench), InputField::Second),
                 invalid(None, InputField::Goal),
             ]
+        );
+    }
+
+    fn tradeoff_request(goal_kg: Option<f64>) -> TradeoffRequest {
+        let mut lifter = request().lifter;
+        lifter.day_form.spread = 0.03;
+        for lift in Lift::ALL {
+            lifter.lifts.get_mut(lift).curve.steepness = 30.0;
+        }
+        TradeoffRequest {
+            lifter,
+            goal_kg,
+            simulations: 500,
+            seed: 7,
+        }
+    }
+
+    #[test]
+    fn sweeps_the_plan_family_in_kg() {
+        let request = tradeoff_request(Some(550.0));
+        let TradeoffResponse::Swept {
+            points,
+            best_for_goal,
+        } = tradeoff(&request)
+        else {
+            panic!("expected points");
+        };
+        let point = points
+            .iter()
+            .find(|p| {
+                p.shape
+                    == PlanShape {
+                        opener_percent: 90,
+                        second_percent: 97,
+                        third_percent: 102,
+                    }
+            })
+            .unwrap();
+        assert_eq!(
+            point.plans.squat,
+            LiftPlanKg {
+                opener_kg: 180.0,
+                second: jumps(12.5, 0.0),
+                third: jumps(10.0, 0.0),
+            }
+        );
+        let best = &points[best_for_goal.unwrap() as usize];
+        assert!(
+            points
+                .iter()
+                .all(|p| p.goal_probability <= best.goal_probability)
+        );
+        assert!(points.iter().any(|p| p.on_frontier));
+    }
+
+    #[test]
+    fn tradeoff_reports_lifter_and_goal_problems() {
+        let problems = |request: &TradeoffRequest| match tradeoff(request) {
+            TradeoffResponse::Invalid { problems } => problems
+                .into_iter()
+                .map(|p| (p.lift, p.field))
+                .collect::<Vec<_>>(),
+            TradeoffResponse::Swept { .. } => panic!("expected problems"),
+        };
+        assert_eq!(
+            problems(&tradeoff_request(Some(-5.0))),
+            [(None, InputField::Goal)]
+        );
+        let mut request = tradeoff_request(None);
+        request.lifter.lifts.bench.expected_max_kg = 10.0;
+        assert_eq!(
+            problems(&request),
+            [(Some(Lift::Bench), InputField::ExpectedMax)]
         );
     }
 
