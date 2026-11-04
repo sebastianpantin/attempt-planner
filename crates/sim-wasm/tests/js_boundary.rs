@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use attempt_sim_wasm::dto::{EvaluateRequest, SearchRequest, TradeoffRequest};
-use attempt_sim_wasm::{PlanSearch, evaluate, tradeoff};
+use attempt_sim_wasm::{PlanSearch, estimate_maxes, evaluate, tradeoff};
 use js_sys::JSON;
 use tsify::Ts;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -116,4 +116,43 @@ fn a_search_steps_until_done() {
 fn a_search_with_an_invalid_cap_throws_its_problem() {
     let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "bombOutCap": 3"#);
     assert!(PlanSearch::new(search_request(&request)).is_err());
+}
+
+const PAST_MEETS: &str = r#"{
+    "curves": {
+        "squat": { "ratioAtHalf": 1, "steepness": 60 },
+        "bench": { "ratioAtHalf": 1, "steepness": 60 },
+        "deadlift": { "ratioAtHalf": 1, "steepness": 60 }
+    },
+    "typicalOpener": { "squat": 0.9, "bench": 0.9, "deadlift": 0.9 },
+    "dayFormSpread": 0.03,
+    "meets": [{
+        "day": 19784,
+        "attempts": {
+            "squat": [{ "kg": 180, "made": true }, { "kg": 190, "made": true }, { "kg": 197.5, "made": false }],
+            "bench": [],
+            "deadlift": []
+        }
+    }],
+    "onDay": 19800
+}"#;
+
+#[wasm_bindgen_test]
+fn estimates_maxes_from_past_meets() {
+    let request = Ts::new_unchecked(JSON::parse(PAST_MEETS).unwrap());
+    let estimate = estimate_maxes(request).unwrap();
+    let json: String = JSON::stringify(&estimate.js_value()).unwrap().into();
+    assert!(
+        json.starts_with(r#"{"lifts":{"squat":{"expectedMaxKg":"#),
+        "{json}"
+    );
+    assert!(!json.contains(r#""bench""#), "{json}");
+    assert!(json.contains(r#""yearlyProgress":"#), "{json}");
+}
+
+#[wasm_bindgen_test]
+fn estimating_from_a_negative_weight_throws() {
+    let json = PAST_MEETS.replace(r#""kg": 180"#, r#""kg": -180"#);
+    let request = Ts::new_unchecked(JSON::parse(&json).unwrap());
+    assert!(estimate_maxes(request).is_err());
 }
