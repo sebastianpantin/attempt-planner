@@ -10,6 +10,16 @@ import type {
   TradeoffRequest,
   TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
+import {
+  aboveMaxWarnings,
+  defaultShape,
+  isPlanField,
+  isUsableMax,
+  PLAN_FIELDS,
+  type PlanShape,
+  scaledPlan,
+  shapeOf,
+} from "./attempt-scaling.ts";
 import { describePoint, drawTradeoff } from "./chart.ts";
 import { element } from "./dom.ts";
 import type { Failed } from "./engine.ts";
@@ -18,46 +28,60 @@ import {
   describeKept,
   EXAMPLE,
   type Sex,
+  START,
   switchCalibration,
 } from "./example.ts";
 import * as format from "./format.ts";
-import { LIFT_NAMES, shortKg, weight } from "./format.ts";
+import { LIFT_NAMES } from "./format.ts";
 import {
   buildRequest,
   buildSearchRequest,
   buildTradeoffRequest,
-  describeProblem,
   type FormValues,
   INPUT_NAMES,
   type InputName,
   inputName,
-  inputsFor,
   type LiftField,
   LIFTS,
   planValues,
   sweepOnlyProblems,
 } from "./inputs.ts";
 import {
+  bestMade,
   buildEstimateRequest,
+  estimateLine,
   estimateValues,
   parsePastMeets,
   today,
 } from "./past-meets.ts";
 import {
+  averageLine,
   barFigures,
   outcomeSentence,
+  rangeLabels,
   rangeLayout,
   ringFigure,
+  riskWarning,
+  totalKg,
 } from "./outcome.ts";
 import {
   BOMB_OUT_CAPS,
   bombOutCapLabel,
   bombOutCapPercent,
+  FIRST_MEET_CAP_PERCENT,
   jumpLabels,
   ladder,
-  problemListId,
   sliderPosition,
+  valueText,
 } from "./plan-view.ts";
+import {
+  describeProblem,
+  inputsFor,
+  maxesPrompt,
+  problemListId,
+  shownProblems,
+} from "./problems.ts";
+import { isTerm, termHelp } from "./terms.ts";
 import { renderAnalytics } from "./analytics/analytics.ts";
 import { startSearch } from "./search-runner.ts";
 import { describeSearch } from "./search-view.ts";
@@ -87,7 +111,8 @@ const input = (name: InputName | "precise" | "noBombOutCap") =>
 
 /**
  * A number input between −/+ buttons; the buttons stay out of the tab order as arrow keys
- * step the input. A jump shows signed, "+12.5" or "repeat", while it is not being edited.
+ * step the input. A jump shows signed, "+12.5" or "repeat", while it is not being edited,
+ * and a screen reader hears the same in words.
  */
 function stepper(lift: Lift, field: LiftField, label: string): string {
   const shownJump =
@@ -144,11 +169,13 @@ function liftCard(lift: Lift, index: number): string {
       <summary>
         <h3>${name}</h3>
         <span class="lift-line" id="${lift}-line"></span>
+        <span class="over" id="${lift}-over"></span>
         <span class="pill" id="${lift}-make"></span>
       </summary>
+      <ul class="warnings" id="${lift}-warnings"></ul>
       <div class="ladder">
         <div class="attempt opener">
-          <p class="n">Opener</p>
+          <div class="with-term"><p class="n">Opener</p>${termHelp("opener")}</div>
           ${stepper(lift, "openerKg", `${name} opener`)}
           <p class="note" id="${lift}-share"></p>
         </div>
@@ -160,13 +187,17 @@ function liftCard(lift: Lift, index: number): string {
 }
 
 const maxField = (lift: Lift) => `
-  <label class="field">
-    <span>${LIFT_NAMES[lift].full}<span class="visually-hidden"> expected max</span></span>
-    <span class="input big">
-      <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5" />
-      <span aria-hidden="true">kg</span>
-    </span>
-  </label>`;
+  <div>
+    <label class="field">
+      <span>${LIFT_NAMES[lift].full}<span class="visually-hidden"> expected max</span></span>
+      <span class="input big">
+        <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5"
+          aria-describedby="maxes-hint" />
+        <span aria-hidden="true">kg</span>
+      </span>
+    </label>
+    <ul class="problems" id="${lift}-max-problems"></ul>
+  </div>`;
 
 function curveRow(lift: Lift): string {
   const name = LIFT_NAMES[lift].full;
@@ -201,7 +232,14 @@ function setInput(name: InputName, value: number) {
     name === "bombOutCapPercent" ? sliderPosition(value) : value;
 }
 
-for (const name of INPUT_NAMES) setInput(name, EXAMPLE[name]);
+for (const placeholder of document.querySelectorAll<HTMLElement>(
+  "[data-term]",
+)) {
+  const term = placeholder.dataset.term!;
+  if (isTerm(term)) placeholder.outerHTML = termHelp(term);
+}
+
+for (const name of INPUT_NAMES) setInput(name, START[name]);
 
 const readValues = () =>
   ({
@@ -246,10 +284,26 @@ function showPlans(values: FormValues) {
       stepper.toggleAttribute("data-shown", label !== undefined);
       stepper.querySelector(".shown-jump")!.textContent = label ?? "";
     }
+    for (const field of PLAN_FIELDS) {
+      const name = inputName(lift, field);
+      input(name).setAttribute(
+        "aria-valuetext",
+        valueText(field, values[name]),
+      );
+    }
+    const warnings = aboveMaxWarnings(
+      plans[lift],
+      values[inputName(lift, "expectedMaxKg")],
+    );
+    byId(`${lift}-warnings`).replaceChildren(
+      ...warnings.map((warning) => element("li", "", warning)),
+    );
+    byId(`${lift}-over`).textContent =
+      warnings.length > 0 ? "Attempt above your max" : "";
   }
 }
 
-function markProblems(problems: Problem[]) {
+function markProblems(problems: Problem[], values: FormValues) {
   for (const name of INPUT_NAMES) {
     input(name).removeAttribute("aria-invalid");
     input(name).removeAttribute("aria-describedby");
@@ -260,7 +314,7 @@ function markProblems(problems: Problem[]) {
   for (const [index, problem] of problems.entries()) {
     const item = element("li", "", describeProblem(problem));
     item.id = `problem-${index}`;
-    for (const name of inputsFor(problem)) {
+    for (const name of inputsFor(problem, values)) {
       const marked = input(name);
       marked.setAttribute("aria-invalid", "true");
       const described = marked.getAttribute("aria-describedby");
@@ -298,8 +352,15 @@ function showEvaluation(
       stressed ? strong(text) : text,
     ),
   );
-  byId("average-total").textContent = format.kg(evaluation.expectedTotalKg);
+  byId("typical-total").textContent = totalKg(
+    evaluation.totalPercentilesKg.p50,
+  );
   byId("bomb-out").textContent = format.percent(evaluation.bombOutProbability);
+  byId("risk-warning").textContent = riskWarning(evaluation.bombOutProbability);
+  byId("average-line").textContent = averageLine(
+    evaluation.expectedTotalKg,
+    evaluation.expectedTotalWithoutBombOutKg,
+  );
   showRange(evaluation.totalPercentilesKg, goalKg);
   byId("summary-bar-figures").replaceChildren(
     ...barFigures(evaluation, goalKg).map(([value, meaning]) => {
@@ -308,11 +369,6 @@ function showEvaluation(
       return figure;
     }),
   );
-  byId("without-bomb-out").textContent = `Average total without a bomb-out: ${
-    evaluation.expectedTotalWithoutBombOutKg === undefined
-      ? "every meet bombed out"
-      : format.kg(evaluation.expectedTotalWithoutBombOutKg)
-  }.`;
   byId("simulation-error").textContent = format.simulationError(
     evaluation.standardErrors,
     request.simulations,
@@ -349,9 +405,11 @@ function showRange(totals: Percentiles, goalKg: number | undefined) {
   const goal = byId("range-goal");
   goal.hidden = layout.goalPercent === undefined;
   goal.style.left = `${layout.goalPercent ?? 0}%`;
-  byId("range-low").textContent = shortKg(totals.p10);
-  byId("range-median-label").textContent = `median ${weight(totals.p50)}`;
-  byId("range-high").textContent = shortKg(totals.p90);
+  const labels = rangeLabels(totals);
+  byId("range-low").textContent = labels.low;
+  byId("range-median-label").textContent = labels.median;
+  byId("range-high").textContent = labels.high;
+  byId("range-note").textContent = labels.note;
 }
 
 const status = (id: string, text: string) => {
@@ -386,8 +444,16 @@ const problems: { evaluation: Problem[]; sweep: Problem[] } = {
   evaluation: [],
   sweep: [],
 };
-const showProblems = () =>
-  markProblems([...problems.evaluation, ...problems.sweep]);
+/** The values last simulated, which the problems shown belong to. */
+let simulatedValues = START;
+const showProblems = () => {
+  const shownList = shownProblems(
+    [...problems.evaluation, ...problems.sweep],
+    simulatedValues,
+  );
+  markProblems(shownList, simulatedValues);
+  byId("to-problem").hidden = shownList.length === 0;
+};
 let shownTradeoff:
   | {
       sweep: Extract<TradeoffResponse, { kind: "swept" }>;
@@ -395,10 +461,41 @@ let shownTradeoff:
     }
   | undefined;
 
+/** Each lift's plan as shares of its max, which the attempts follow when the max changes. */
+const shapes = Object.fromEntries(
+  LIFTS.map((lift) => [
+    lift,
+    defaultShape(CALIBRATIONS.any.typicalOpener[lift]),
+  ]),
+) as Record<Lift, PlanShape>;
+/** Lifts whose attempts were edited by hand since they last followed the max. */
+const handEdited = new Set<Lift>();
+
+/** Takes the attempts as they are now as the ones to follow the maxes. */
+function rememberShapes() {
+  const values = readValues();
+  for (const lift of LIFTS) {
+    const shape = shapeOf(values, lift);
+    if (!shape) continue;
+    shapes[lift] = shape;
+    handEdited.delete(lift);
+  }
+}
+
+/** Rescales a lift's attempts to its max, unless they were edited by hand. */
+function followMax(lift: Lift) {
+  const maxKg = input(inputName(lift, "expectedMaxKg")).valueAsNumber;
+  if (handEdited.has(lift) || !isUsableMax(maxKg)) return;
+  for (const [name, kg] of scaledPlan(shapes[lift], lift, maxKg)) {
+    setInput(name, kg);
+  }
+}
+
 function usePlans(plans: TradeoffPoint["plans"]) {
   for (const [name, kg] of planValues(plans)) {
     setInput(name, kg);
   }
+  rememberShapes();
   update();
 }
 
@@ -496,11 +593,13 @@ const submitEvaluation = simulationWorker("evaluate", {
     showEvaluation(shown?.evaluation, request);
     showAnalytics();
     showTradeoff();
+    byId("search").hidden = maxesPrompt(simulatedValues) !== "";
     report(
       "status",
       reply,
       () => `${count.format(request.simulations)} simulated meets.`,
-      "Fix the marked inputs to see results.",
+      maxesPrompt(simulatedValues) ||
+        "Results paused: fix the marked inputs to see them again.",
       "The simulation failed",
     );
   },
@@ -539,6 +638,7 @@ const submitChanges = simulationWorker("changes", {
 
 let sweptKey = "";
 function simulate(values: FormValues) {
+  simulatedValues = values;
   submitEvaluation(buildRequest(values, input("precise").checked));
   shownChanges = undefined;
   submitChanges(buildSearchRequest(values));
@@ -563,6 +663,7 @@ function update() {
 }
 
 const findButton = byId("find-plan") as HTMLButtonElement;
+const firstMeetButton = byId("first-meet") as HTMLButtonElement;
 const cancelButton = byId("cancel-search") as HTMLButtonElement;
 const barFindButton = byId("bar-find-plan") as HTMLButtonElement;
 const barCancelButton = byId("bar-cancel-search") as HTMLButtonElement;
@@ -576,7 +677,10 @@ function searchStatus(text: string) {
 
 /** Shows the search running or not, in the outcome card and the bottom bar. */
 function showSearching(searching: boolean) {
-  findButton.disabled = barFindButton.disabled = searching;
+  findButton.disabled =
+    barFindButton.disabled =
+    firstMeetButton.disabled =
+      searching;
   cancelButton.hidden = barCancelButton.hidden = !searching;
   barFindButton.hidden = searching;
   byId("summary-bar-figures").hidden = searching;
@@ -621,6 +725,48 @@ barFindButton.addEventListener("click", () => search(barCancelButton));
 cancelButton.addEventListener("click", cancelSearch);
 barCancelButton.addEventListener("click", cancelSearch);
 
+/** A first meet asks for a plan that hardly ever bombs out, searched at once when the maxes are in. */
+firstMeetButton.addEventListener("click", () => {
+  noBombOutCap.checked = false;
+  setInput("bombOutCapPercent", FIRST_MEET_CAP_PERCENT);
+  update();
+  const missing = maxesPrompt(readValues());
+  status(
+    "first-meet-status",
+    missing
+      ? `Bomb-out limit set to ${FIRST_MEET_CAP_PERCENT}%. ${missing.replace("see results", "plan your attempts")}`
+      : "",
+  );
+  if (!missing) search(cancelButton);
+});
+
+byId("try-example").addEventListener("click", () => {
+  const lifterNames = [
+    ...LIFTS.flatMap((lift) =>
+      (["expectedMaxKg", ...PLAN_FIELDS] as const).map((field) =>
+        inputName(lift, field),
+      ),
+    ),
+    "goalKg",
+    "bombOutCapPercent",
+  ] as const;
+  for (const name of lifterNames) setInput(name, EXAMPLE[name]);
+  noBombOutCap.checked = false;
+  rememberShapes();
+  status(
+    "example-status",
+    "Showing an example lifter. Enter your own maxes and goal to plan your meet.",
+  );
+  update();
+});
+
+byId("to-problem").addEventListener("click", () => {
+  form.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus();
+});
+
+const howItWorks = byId("how") as HTMLDialogElement;
+byId("how-it-works").addEventListener("click", () => howItWorks.showModal());
+
 const compareButton = byId("compare-plans");
 compareButton.addEventListener("click", () => {
   const tradeoff = byId("tradeoff");
@@ -660,6 +806,7 @@ const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
 const useEstimateButton = byId("use-estimate") as HTMLButtonElement;
 let estimatedValues: [InputName, number][] = [];
 let skippedMeets = 0;
+let bestMadeKg = bestMade([]);
 
 function showEstimate(estimate: MaxEstimate | undefined) {
   estimatedValues = estimate ? estimateValues(estimate) : [];
@@ -669,13 +816,7 @@ function showEstimate(estimate: MaxEstimate | undefined) {
       ? LIFTS.flatMap((lift) => {
           const found = estimate.lifts[lift];
           return found
-            ? [
-                element(
-                  "li",
-                  "",
-                  `${LIFT_NAMES[lift].full}: ${format.kg(found.expectedMaxKg)} ± ${format.percent(found.uncertainty)}, from ${count.format(found.meets)} ${found.meets === 1 ? "meet" : "meets"}`,
-                ),
-              ]
+            ? [element("li", "", estimateLine(lift, found, bestMadeKg[lift]))]
             : [];
         })
       : []),
@@ -695,7 +836,7 @@ const submitEstimate = simulationWorker("estimate", {
     showEstimate(estimate);
     const skipped =
       skippedMeets > 0
-        ? ` Skipped ${count.format(skippedMeets)} ${skippedMeets === 1 ? "line" : "lines"} that were not a raw meet with attempts.`
+        ? ` Skipped ${count.format(skippedMeets)} ${skippedMeets === 1 ? "line that was" : "lines that were"} not a raw meet with attempts.`
         : "";
     status(
       "estimate-status",
@@ -707,6 +848,7 @@ const submitEstimate = simulationWorker("estimate", {
 estimateButton.addEventListener("click", () => {
   const { meets, skipped } = parsePastMeets(pastMeets.value);
   skippedMeets = skipped;
+  bestMadeKg = bestMade(meets);
   if (meets.length === 0) {
     showEstimate(undefined);
     status(
@@ -728,12 +870,18 @@ estimateButton.addEventListener("click", () => {
 
 useEstimateButton.addEventListener("click", () => {
   for (const [name, value] of estimatedValues) setInput(name, value);
+  for (const lift of LIFTS) followMax(lift);
   update();
 });
 
 form.addEventListener("input", (event) => {
   const { name } = event.target as HTMLInputElement;
   if (!CONTROL_NAMES.has(name)) return;
+  status("example-status", "");
+  status("first-meet-status", "");
+  const [lift, field = ""] = name.split("-") as [Lift, string?];
+  if (isPlanField(field)) handEdited.add(lift);
+  if (field === "expectedMaxKg") followMax(lift);
   if (name === "sex") {
     const { changes, kept } = switchCalibration(
       readValues(),

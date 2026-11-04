@@ -1,10 +1,6 @@
 import type { Lift, StandardErrors } from "../pkg/attempt_sim_wasm.js";
 import { PRECISE_SIMULATIONS } from "./inputs.ts";
 
-const oneDecimal = new Intl.NumberFormat("en", {
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
 const percentFormat = (
   minimumFractionDigits: number,
   maximumFractionDigits: number,
@@ -32,11 +28,11 @@ export const LIFT_NAMES: Record<Lift, { full: string; short: string }> = {
   deadlift: { full: "Deadlift", short: "Deadlift" },
 };
 
-export const kg = (value: number) => `${oneDecimal.format(value)} kg`;
-
 /** A weight without a needless ".0": "182.5", "195". */
 export const weight = (kg: number) => upToOneDecimal.format(kg);
-export const shortKg = (kg: number) => `${weight(kg)} kg`;
+
+/** A weight in kg with at most one decimal: "195 kg", "202.5 kg". */
+export const kg = (value: number) => `${weight(value)} kg`;
 
 /** A jump with its sign, "+12.5"; with `zeroRepeats`, a jump of 0 reads "repeat". */
 export function jump(kg: number, zeroRepeats: boolean): string {

@@ -7,16 +7,17 @@ import {
   listOf,
   percent,
   roundChanceUp,
-  shortKg,
   simulationError,
   wholePercent,
 } from "./format.ts";
 import { PRECISE_SIMULATIONS, QUICK_SIMULATIONS } from "./inputs.ts";
 
-it("shows kg with exactly one decimal", () => {
-  expect(kg(200)).toBe("200.0 kg");
+it("shows kg with at most one decimal, without a needless .0", () => {
+  expect(kg(200)).toBe("200 kg");
+  expect(kg(195)).toBe("195 kg");
   expect(kg(202.5)).toBe("202.5 kg");
   expect(kg(512.3456)).toBe("512.3 kg");
+  expect(kg(1002.5)).toBe("1,002.5 kg");
 });
 
 it("shows probabilities with exactly one decimal", () => {
@@ -75,12 +76,6 @@ it("sums up the simulation error in one line", () => {
   ).toBe(
     "Simulation error: about ±0.1 kg on the total and ±0.2% on the bomb-out chance.",
   );
-});
-
-it("drops a needless decimal from a short weight", () => {
-  expect(shortKg(195)).toBe("195 kg");
-  expect(shortKg(182.5)).toBe("182.5 kg");
-  expect(shortKg(1002.5)).toBe("1,002.5 kg");
 });
 
 it("signs a jump, and reads a jump of 0 after a miss as a repeat", () => {

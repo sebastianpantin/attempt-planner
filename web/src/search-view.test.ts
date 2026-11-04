@@ -41,3 +41,19 @@ it("reports a plan within the cap as found", () => {
     "Found in 1 round and filled in: 78.1% chance of reaching the goal, 553.2 kg average total, 4.8% bomb-out chance.",
   );
 });
+
+it("warns when a search with any risk allowed finds a plan that bombs out often", () => {
+  expect(
+    describeSearch(
+      progress({ done: true, round: 2, bombOutProbability: 0.155 }),
+    ),
+  ).toMatch(
+    /15\.5% bomb-out chance\. With any risk allowed, this plan bombs out often\./,
+  );
+  expect(
+    describeSearch(
+      progress({ done: true, round: 2, bombOutProbability: 0.155 }),
+      0.2,
+    ),
+  ).not.toMatch(/With any risk allowed/);
+});

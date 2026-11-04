@@ -1,4 +1,4 @@
-import type { Lift, LiftPlanKg, Problem } from "../pkg/attempt_sim_wasm.js";
+import type { Lift, LiftPlanKg } from "../pkg/attempt_sim_wasm.js";
 import { attemptTree } from "./attempt-tree.ts";
 import { jump, weight, wholePercent } from "./format.ts";
 import {
@@ -7,6 +7,7 @@ import {
   inputName,
   isRepeatJump,
   JUMP_FIELDS,
+  type LiftField,
 } from "./inputs.ts";
 
 const path = (...weights: number[]) => weights.map(weight).join(" → ");
@@ -40,7 +41,7 @@ export function ladder(plan: LiftPlanKg, expectedMaxKg: number): Ladder {
     secondKg: weight(made.weightKg),
     thirdKg: weight(made.afterMake.weightKg),
     shareOfMax,
-    line: `· ${allMade}`,
+    line: allMade,
     paths: [
       ["All made", allMade],
       [
@@ -50,6 +51,16 @@ export function ladder(plan: LiftPlanKg, expectedMaxKg: number): Ladder {
       ["Miss the 2nd", path(opener, made.weightKg, made.afterMiss.weightKg)],
     ],
   };
+}
+
+/** What a screen reader says for a plan input's value, as the jumps show signed. */
+export function valueText(field: LiftField, kg: number): string {
+  if (Number.isNaN(kg)) return "empty";
+  if (field === "openerKg") return `${weight(kg)} kg`;
+  if (kg === 0) {
+    return isRepeatJump(field) ? "repeat the same weight" : "no change";
+  }
+  return `${weight(Math.abs(kg))} kg ${kg > 0 ? "more" : "less"}`;
 }
 
 /** Each jump input of a lift with the signed jump shown over it, none while it is empty. */
@@ -92,13 +103,12 @@ export const sliderPosition = (percent: number) =>
     0,
   );
 
-/** The cap the page asks for: the slider's cap, or none with no limit. */
-export const bombOutCapPercent = (position: number, noLimit: boolean) =>
-  noLimit ? Number.NaN : capAt(position);
+/** The cap the page asks for: the slider's cap, or none when any risk goes. */
+export const bombOutCapPercent = (position: number, anyRisk: boolean) =>
+  anyRisk ? Number.NaN : capAt(position);
 
-export const bombOutCapLabel = (position: number, noLimit: boolean) =>
-  noLimit ? "No limit" : `${weight(capAt(position))}%`;
+export const bombOutCapLabel = (position: number, anyRisk: boolean) =>
+  anyRisk ? "Any risk" : `${weight(capAt(position))}%`;
 
-/** The list a problem goes in: the maxes, its lift's attempts, or the meet. */
-export const problemListId = ({ lift, field }: Problem) =>
-  field === "expectedMax" ? "maxes-problems" : `${lift ?? "meet"}-problems`;
+/** The cap a first meet asks for: hardly ever bombing out. */
+export const FIRST_MEET_CAP_PERCENT = 1;

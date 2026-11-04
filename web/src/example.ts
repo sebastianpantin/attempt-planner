@@ -1,6 +1,12 @@
 import type { PerLift } from "../pkg/attempt_sim_wasm.js";
 import { listOf } from "./format.ts";
-import { type FormValues, type InputName, inputName, LIFTS } from "./inputs.ts";
+import {
+  type FormValues,
+  INPUT_NAMES,
+  type InputName,
+  inputName,
+  LIFTS,
+} from "./inputs.ts";
 
 export type Sex = "any" | "men" | "women";
 
@@ -130,3 +136,12 @@ export const EXAMPLE: FormValues = {
   bombOutCapPercent: 5,
   ...Object.fromEntries(calibrationValues("any")),
 } as FormValues;
+
+/** The page's first values: the model and a 5% bomb-out limit, with the lifter's own numbers empty. */
+export const START: FormValues = {
+  ...(Object.fromEntries(
+    INPUT_NAMES.map((name) => [name, Number.NaN]),
+  ) as FormValues),
+  bombOutCapPercent: EXAMPLE.bombOutCapPercent,
+  ...Object.fromEntries(calibrationValues("any")),
+};

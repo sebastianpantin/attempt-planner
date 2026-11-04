@@ -6,8 +6,8 @@ import {
   bombOutCapPercent,
   jumpLabels,
   ladder,
-  problemListId,
   sliderPosition,
+  valueText,
 } from "./plan-view.ts";
 
 const plan = {
@@ -22,7 +22,7 @@ describe("ladder", () => {
       secondKg: "195",
       thirdKg: "202.5",
       shareOfMax: "91% of your max",
-      line: "· 182.5 → 195 → 202.5",
+      line: "182.5 → 195 → 202.5",
       paths: [
         ["All made", "182.5 → 195 → 202.5"],
         ["Miss the opener", "182.5 → 182.5 → 190"],
@@ -89,36 +89,19 @@ describe("the bomb-out cap slider", () => {
     expect(BOMB_OUT_CAPS[sliderPosition(2.4)]).toBe(2.5);
   });
 
-  it("shows the cap as a percentage, or no limit", () => {
+  it("shows the cap as a percentage, or any risk", () => {
     expect(bombOutCapLabel(sliderPosition(5), false)).toBe("5%");
     expect(bombOutCapLabel(sliderPosition(2.5), false)).toBe("2.5%");
-    expect(bombOutCapLabel(sliderPosition(5), true)).toBe("No limit");
+    expect(bombOutCapLabel(sliderPosition(5), true)).toBe("Any risk");
   });
 });
 
-describe("problemListId", () => {
-  it("lists a problem with an expected max under the maxes", () => {
-    expect(
-      problemListId({
-        lift: "bench",
-        field: "expectedMax",
-        code: "invalidWeight",
-        message: "",
-      }),
-    ).toBe("maxes-problems");
-  });
-
-  it("lists other problems under their lift, or the meet", () => {
-    expect(
-      problemListId({
-        lift: "bench",
-        field: "opener",
-        code: "invalidWeight",
-        message: "",
-      }),
-    ).toBe("bench-problems");
-    expect(
-      problemListId({ field: "goal", code: "invalidWeight", message: "" }),
-    ).toBe("meet-problems");
+describe("valueText", () => {
+  it("reads a jump as more or less, a repeat in words and the opener as a weight", () => {
+    expect(valueText("openerKg", 182.5)).toBe("182.5 kg");
+    expect(valueText("secondAfterMakeKg", 12.5)).toBe("12.5 kg more");
+    expect(valueText("secondAfterMissKg", 0)).toBe("repeat the same weight");
+    expect(valueText("thirdAfterMissKg", -2.5)).toBe("2.5 kg less");
+    expect(valueText("thirdAfterMakeKg", Number.NaN)).toBe("empty");
   });
 });

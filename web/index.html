@@ -10,22 +10,20 @@
   <body>
     <header class="top">
       <h1>Attempt planner</h1>
-      <a href="https://github.com/sebastianpantin/attempt-planner#readme">
-        How it works
-      </a>
+      <button type="button" class="link" id="how-it-works">How it works</button>
     </header>
 
     <main class="page">
-      <form id="plan" class="stack" novalidate>
+      <form id="plan" novalidate>
         <section class="card" aria-labelledby="meet-heading">
           <h2 class="step" id="meet-heading"><b>1</b> Your meet</h2>
           <div class="row">
-            <fieldset class="segmented">
-              <legend>Lifter</legend>
+            <fieldset class="segmented" aria-describedby="sex-hint">
+              <legend>Make rates based on</legend>
               <div>
                 <label>
                   <input type="radio" name="sex" value="any" checked />
-                  Any
+                  All lifters
                 </label>
                 <label><input type="radio" name="sex" value="men" /> Men</label>
                 <label>
@@ -33,6 +31,9 @@
                   Women
                 </label>
               </div>
+              <p class="note" id="sex-hint">
+                Uses how often that group makes its attempts in raw meets.
+              </p>
             </fieldset>
             <label class="field">
               Goal total
@@ -48,9 +49,12 @@
               </span>
             </label>
             <div class="field slider">
-              <label for="bomb-out-cap">
-                Highest bomb-out risk you accept:
-              </label>
+              <div class="with-term">
+                <label for="bomb-out-cap">
+                  Highest bomb-out risk you accept:
+                </label>
+                <span data-term="bombOut"></span>
+              </div>
               <output id="bomb-out-cap-value" for="bomb-out-cap"></output>
               <input
                 id="bomb-out-cap"
@@ -64,33 +68,52 @@
               </span>
               <label class="check">
                 <input name="noBombOutCap" type="checkbox" />
-                No limit
+                Any risk
               </label>
             </div>
           </div>
-          <label class="check switch">
-            <input name="precise" type="checkbox" role="switch" />
-            Precise: 1,000,000 meets instead of 20,000
-          </label>
           <p id="sex-status" class="note" role="status"></p>
           <ul class="problems" id="meet-problems"></ul>
+          <div class="tip">
+            <p>
+              <b>First meet?</b> Open with a weight you could triple, aim to
+              make all nine attempts, and keep thirds at or below your gym best.
+            </p>
+            <button type="button" class="btn secondary" id="first-meet">
+              Plan a safe first meet
+            </button>
+            <p id="first-meet-status" class="note" role="status"></p>
+          </div>
         </section>
 
         <section class="card" aria-labelledby="maxes-heading">
           <h2 class="step" id="maxes-heading"><b>2</b> Your maxes</h2>
+          <div class="with-term intro">
+            <p class="note" id="maxes-hint">
+              Your expected max on meet day for each lift. The planner fills in
+              attempts from them.
+            </p>
+            <span data-term="expectedMax"></span>
+          </div>
           <div class="row" id="maxes"></div>
-          <ul class="problems" id="maxes-problems"></ul>
+          <div class="example">
+            <button type="button" class="btn secondary" id="try-example">
+              Try an example
+            </button>
+            <p id="example-status" class="note" role="status"></p>
+          </div>
           <details class="past-meets">
             <summary>
               <span class="note">Not sure?</span>
               <span class="link">Estimate them from your past meets</span>
             </summary>
             <p class="note">
-              Estimates your expected maxes from the attempts you took. Paste
-              the CSV from your OpenPowerlifting lifter page, or write one meet
-              per line: the date, then 3 squat, 3 bench and 3 deadlift attempts,
-              with a minus sign for a miss and 0 for an attempt not taken. Only
-              raw meets count, and nothing leaves your browser.
+              Estimates your expected maxes from the attempts you took, and
+              shows your best made lifts next to them. Paste the CSV from your
+              OpenPowerlifting lifter page, or write one meet per line: the
+              date, then 3 squat, 3 bench and 3 deadlift attempts, with a minus
+              sign for a miss and 0 for an attempt not taken. Only raw meets
+              count, and nothing leaves your browser.
             </p>
             <p class="note" id="past-meets-example">
               For example:
@@ -123,6 +146,104 @@
         <section class="card" aria-labelledby="attempts-heading">
           <h2 class="step" id="attempts-heading"><b>3</b> Your attempts</h2>
           <div id="lifts" class="lifts"></div>
+        </section>
+
+        <section
+          id="results"
+          class="card outcome"
+          aria-labelledby="results-heading"
+        >
+          <h2 id="results-heading">How this plan plays out</h2>
+          <div id="evaluation" class="stack" hidden>
+            <div class="hero">
+              <p class="ring" id="ring">
+                <span>
+                  <strong id="ring-value"></strong>
+                  <small id="ring-label"></small>
+                </span>
+              </p>
+              <p id="outcome-sentence"></p>
+            </div>
+            <p id="risk-warning" class="warning"></p>
+            <dl class="stats">
+              <div class="stat">
+                <dt>Typical total (median)</dt>
+                <dd id="typical-total"></dd>
+              </div>
+              <div class="stat risk">
+                <dt class="with-term">
+                  Bomb-out risk <span data-term="bombOut"></span>
+                </dt>
+                <dd id="bomb-out"></dd>
+              </div>
+            </dl>
+            <p id="average-line" class="note"></p>
+            <div class="range">
+              <div class="with-term">
+                <p class="note">Likely totals (10th to 90th percentile)</p>
+                <span data-term="percentile"></span>
+              </div>
+              <div class="bar" aria-hidden="true">
+                <div class="fill" id="range-fill"></div>
+                <div class="goal" id="range-goal"></div>
+                <div class="median" id="range-median"></div>
+              </div>
+              <p class="labels">
+                <span id="range-low"></span>
+                <span id="range-median-label"></span>
+                <span id="range-high"></span>
+              </p>
+              <p id="range-note" class="note"></p>
+            </div>
+          </div>
+          <div id="search" class="stack">
+            <button type="button" class="btn primary" id="find-plan">
+              Find my best plan
+            </button>
+            <button
+              type="button"
+              class="btn secondary"
+              id="cancel-search"
+              hidden
+            >
+              Cancel
+            </button>
+            <p id="search-status" class="note" role="status"></p>
+            <button
+              type="button"
+              class="btn secondary"
+              id="compare-plans"
+              aria-expanded="false"
+              aria-controls="tradeoff"
+            >
+              Compare safer and bolder plans
+            </button>
+          </div>
+          <p class="note">
+            <span id="status" role="status"></span> Results update as you type.
+          </p>
+          <button type="button" class="btn secondary" id="to-problem" hidden>
+            Go to the first marked input
+          </button>
+          <details id="evaluation-details" class="details" hidden>
+            <summary>Details</summary>
+            <p id="simulation-error" class="note"></p>
+            <table>
+              <caption>
+                Per lift
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Lift</th>
+                  <th scope="col">At least one make</th>
+                  <th scope="col">Median best</th>
+                  <th scope="col">Missed for strength</th>
+                  <th scope="col">Missed for technique</th>
+                </tr>
+              </thead>
+              <tbody id="lift-results"></tbody>
+            </table>
+          </details>
         </section>
 
         <section
@@ -205,14 +326,24 @@
               · how steeply make chances drop, day-to-day form
             </span>
           </summary>
+          <label class="check switch">
+            <input name="precise" type="checkbox" role="switch" />
+            Precise: 1,000,000 meets instead of 20,000, for a smaller simulation
+            error
+          </label>
           <fieldset>
             <legend>Day form</legend>
+            <div class="with-term">
+              <span class="note" aria-hidden="true">What is day form?</span
+              ><span data-term="dayForm"></span>
+            </div>
             <p class="note">
               The day max varies around the expected max for two reasons:
               strength moves from day to day, and the expected max itself may be
               off. Lower the uncertainty if the max comes from a recent test or
-              meet. The Lifter choice sets these and the make-rate numbers to
-              those fitted to that group's meets, keeping any you changed.
+              meet. The "Make rates based on" choice sets these and the
+              make-rate numbers to those fitted to that group's meets, keeping
+              any you changed.
             </p>
             <label>
               Day-to-day spread
@@ -239,6 +370,7 @@
                 step="0.01"
               />
             </label>
+            <ul class="problems" id="day-form-problems"></ul>
           </fieldset>
           <fieldset>
             <legend>Make rate</legend>
@@ -248,94 +380,49 @@
               ratio with a 50% make rate. A technical miss, such as a depth call
               or a missed command, can happen at any load.
             </p>
+            <div class="with-term">
+              <span class="note" aria-hidden="true"
+                >What is a technical miss?</span
+              >
+              <span data-term="technicalMiss"></span>
+            </div>
             <div id="curves"></div>
+            <ul class="problems" id="curve-problems"></ul>
           </fieldset>
         </details>
       </form>
-
-      <section
-        id="results"
-        class="card outcome"
-        aria-labelledby="results-heading"
-      >
-        <h2 id="results-heading">How this plan plays out</h2>
-        <div id="evaluation" class="stack" hidden>
-          <div class="hero">
-            <p class="ring" id="ring">
-              <span>
-                <strong id="ring-value"></strong>
-                <small id="ring-label"></small>
-              </span>
-            </p>
-            <p id="outcome-sentence"></p>
-          </div>
-          <dl class="stats">
-            <div class="stat">
-              <dt>Average total</dt>
-              <dd id="average-total"></dd>
-            </div>
-            <div class="stat risk">
-              <dt>Bomb-out risk</dt>
-              <dd id="bomb-out"></dd>
-            </div>
-          </dl>
-          <div class="range">
-            <p class="note">Likely totals (10th to 90th percentile)</p>
-            <div class="bar" aria-hidden="true">
-              <div class="fill" id="range-fill"></div>
-              <div class="goal" id="range-goal"></div>
-              <div class="median" id="range-median"></div>
-            </div>
-            <p class="labels">
-              <span id="range-low"></span>
-              <span id="range-median-label"></span>
-              <span id="range-high"></span>
-            </p>
-          </div>
-        </div>
-        <div id="search" class="stack">
-          <button type="button" class="btn primary" id="find-plan">
-            Find my best plan
-          </button>
-          <button type="button" class="btn secondary" id="cancel-search" hidden>
-            Cancel
-          </button>
-          <p id="search-status" class="note" role="status"></p>
-          <button
-            type="button"
-            class="btn secondary"
-            id="compare-plans"
-            aria-expanded="false"
-            aria-controls="tradeoff"
-          >
-            Compare safer and bolder plans
-          </button>
-        </div>
-        <p class="note">
-          <span id="status" role="status"></span> Results update as you type.
-        </p>
-        <details id="evaluation-details" class="details" hidden>
-          <summary>Details</summary>
-          <p id="without-bomb-out" class="note"></p>
-          <p id="simulation-error" class="note"></p>
-          <table>
-            <caption>
-              Per lift
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">Lift</th>
-                <th scope="col">At least one make</th>
-                <th scope="col">Median best</th>
-                <th scope="col">Missed for strength</th>
-                <th scope="col">Missed for technique</th>
-              </tr>
-            </thead>
-            <tbody id="lift-results"></tbody>
-          </table>
-        </details>
-      </section>
     </main>
+    <dialog id="how" aria-labelledby="how-heading">
+      <h2 id="how-heading">How it works</h2>
+      <p>
+        The planner simulates 20,000 meets with your plan. In each one your max
+        on the day is drawn around your expected max, since strength varies from
+        day to day. Each attempt is then made or missed: the closer the weight
+        is to that day's max, the lower the chance of making it, and any attempt
+        can be a technical miss.
+      </p>
+      <p>
+        Your plan sets the opener and how much to add after a make or a miss.
+        The results count how often you reach your goal, the totals you are
+        likely to post, and how often you bomb out by missing all three attempts
+        on a lift.
+      </p>
+      <p>
+        Find my best plan searches for the attempts with the best chance of
+        reaching your goal, or the highest average total without a goal, while
+        keeping the bomb-out risk within your limit.
+      </p>
+      <p>
+        The make rates are fitted to raw meets in OpenPowerlifting. The model
+        assumes raw lifting in kg, with 2.5 kg plate steps.
+        <a href="https://github.com/sebastianpantin/attempt-planner#readme"
+          >The model in detail</a
+        >
+      </p>
+      <form method="dialog">
+        <button class="btn secondary">Close</button>
+      </form>
+    </dialog>
     <aside id="summary-bar" aria-label="Results summary" hidden>
       <p id="summary-bar-figures"></p>
       <p id="bar-search-status" hidden></p>

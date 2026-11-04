@@ -30,6 +30,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -66,16 +70,19 @@ button {
   letter-spacing: -0.01em;
 }
 
-.top a,
+.top .link,
 .link {
   color: var(--accent);
   text-decoration: none;
 }
 
-.top a {
+.top .link {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .page {
@@ -86,6 +93,20 @@ button {
   gap: 24px;
   grid-template-columns: minmax(0, 1fr) 380px;
   align-items: start;
+  row-gap: 16px;
+}
+
+.page > form {
+  display: contents;
+}
+
+.page > form > * {
+  grid-column: 1;
+}
+
+.page > form > .outcome {
+  grid-column: 2;
+  grid-row: 1 / span 6;
 }
 
 .stack {
@@ -378,9 +399,9 @@ summary::-webkit-details-marker {
   display: none;
 }
 
-.lift summary::before,
-.fine-tune summary::before,
-.details summary::before {
+.lift > summary::before,
+.fine-tune > summary::before,
+.details > summary::before {
   content: "▸";
   color: var(--muted);
   transition: transform 0.15s;
@@ -434,7 +455,7 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
-.lift summary {
+.lift > summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -443,13 +464,13 @@ textarea {
   color: var(--muted);
 }
 
-.lift summary h3 {
+.lift > summary h3 {
   margin: 0;
   font-size: 1.1rem;
   color: var(--ink);
 }
 
-.lift:not([open]) summary h3 {
+.lift:not([open]) > summary h3 {
   font-weight: 500;
   font-size: 1rem;
 }
@@ -473,16 +494,37 @@ textarea {
 }
 
 .lift:not([open]) .pill {
+  flex-basis: 100%;
   margin-left: 0;
   padding: 0;
   background: none;
   color: var(--muted);
   font-weight: 400;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
-.lift:not([open]) .pill::before {
-  content: "· ";
+.over {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--miss-soft);
+  color: var(--miss);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.over:empty {
+  display: none;
+}
+
+.warnings {
+  margin: 0 0 8px;
+  padding-left: 1.25rem;
+  color: var(--warn);
+  font-size: 0.88rem;
+}
+
+.warnings:empty {
+  display: none;
 }
 
 .lift[open] {
@@ -539,19 +581,15 @@ textarea {
 }
 
 .tag {
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 
 .tag.make {
-  background: var(--make-soft);
   color: var(--make);
 }
 
 .tag.miss {
-  background: var(--miss-soft);
   color: var(--miss);
 }
 
@@ -647,14 +685,14 @@ input[aria-invalid="true"] {
   outline: 2px solid var(--problem);
 }
 
-.fine-tune summary {
+.fine-tune > summary {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
 }
 
-.fine-tune summary h2 {
+.fine-tune > summary h2 {
   display: inline;
   margin: 0;
 }
@@ -712,8 +750,104 @@ caption {
 }
 
 #tradeoff[aria-busy="true"] #tradeoff-view,
-#results[aria-busy="true"] #evaluation {
+#results[aria-busy="true"] #evaluation,
+#results[aria-busy="true"] ~ #analytics {
   opacity: 0.5;
+}
+
+.with-term {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.term {
+  display: contents;
+}
+
+.term summary {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.term p {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.intro {
+  margin-bottom: 12px;
+}
+
+.tip {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 0.9rem;
+}
+
+.tip p {
+  margin: 0;
+}
+
+.tip .btn,
+.example .btn {
+  width: auto;
+  justify-self: start;
+  padding: 0 18px;
+}
+
+.example {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+}
+
+.warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--miss-soft);
+  color: var(--miss);
+  font-size: 0.9rem;
+}
+
+.warning:empty {
+  display: none;
+}
+
+dialog {
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+dialog::backdrop {
+  background: rgb(17 24 39 / 0.4);
+}
+
+dialog form {
+  margin-top: 16px;
 }
 
 #tradeoff-plans button {
@@ -886,7 +1020,7 @@ caption {
   gap: 12px;
 }
 
-.details summary {
+.details > summary {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1014,6 +1148,19 @@ caption {
 
   .outcome {
     position: static;
+  }
+
+  .page > form > .outcome {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .term summary {
+    width: 44px;
+    height: 44px;
+    margin: -10px;
+    border: 10px solid transparent;
+    background-clip: padding-box;
   }
 
   .ladder {

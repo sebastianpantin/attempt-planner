@@ -1,5 +1,6 @@
 import type { SearchProgress } from "../pkg/attempt_sim_wasm.js";
 import * as format from "./format.ts";
+import { HIGH_RISK } from "./outcome.ts";
 
 /** The search's progress in words; `bombOutCap` is the highest acceptable bomb-out chance. */
 export function describeSearch(
@@ -21,5 +22,9 @@ export function describeSearch(
     return `No plan keeps the bomb-out chance within ${format.finePercent(bombOutCap)}. This is the safest plan found: ${figures}.`;
   }
   const rounds = progress.round === 1 ? "1 round" : `${progress.round} rounds`;
-  return `Found in ${rounds} and filled in: ${figures}.`;
+  const risky =
+    bombOutCap === undefined && progress.bombOutProbability > HIGH_RISK
+      ? " With any risk allowed, this plan bombs out often. Set a bomb-out limit for a safer one."
+      : "";
+  return `Found in ${rounds} and filled in: ${figures}.${risky}`;
 }

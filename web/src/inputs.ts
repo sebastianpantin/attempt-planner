@@ -1,6 +1,5 @@
 import type {
   EvaluateRequest,
-  InputField,
   Lift,
   LiftPlanKg,
   PerLift,
@@ -154,48 +153,6 @@ export function planValues(plans: PerLift<LiftPlanKg>): [InputName, number][] {
   });
 }
 
-const PROBLEM_LIFT_FIELDS: Partial<Record<InputField, LiftField[]>> = {
-  expectedMax: ["expectedMaxKg"],
-  curve: ["ratioAtHalf", "steepness", "technicalMissPercent"],
-  opener: ["openerKg"],
-  second: ["secondAfterMakeKg", "secondAfterMissKg"],
-  third: ["thirdAfterMakeKg", "thirdAfterMissKg"],
-};
-
-const PROBLEM_MEET_FIELDS: Partial<Record<InputField, MeetField[]>> = {
-  goal: ["goalKg"],
-  dayForm: ["spreadPercent", "maxUncertaintyPercent", "correlation"],
-  bombOutCap: ["bombOutCapPercent"],
-};
-
-/** The inputs to mark for a problem the engine found. */
-export function inputsFor({ lift, field }: Problem): InputName[] {
-  if (lift) {
-    return (PROBLEM_LIFT_FIELDS[field] ?? []).map((f) => inputName(lift, f));
-  }
-  return PROBLEM_MEET_FIELDS[field] ?? [];
-}
-
-const FIELD_LABELS: Record<InputField, string> = {
-  expectedMax: "Expected max",
-  curve: "Make rate",
-  opener: "Opener",
-  second: "2nd attempt",
-  third: "3rd attempt",
-  dayForm: "Day form",
-  simulations: "Simulations",
-  goal: "Goal",
-  bombOutCap: "Bomb-out cap",
-};
-
-/** The cap is a percent on the page but a chance from 0 to 1 in the engine. */
-const PAGE_MESSAGES: Partial<Record<Problem["code"], string>> = {
-  invalidBombOutCap: "must be from 0 to 100%",
-};
-
 /** The sweep's problems that only it reports, so they are not listed twice. */
 export const sweepOnlyProblems = (problems: Problem[]) =>
   problems.filter((problem) => problem.field === "bombOutCap");
-
-export const describeProblem = ({ field, code, message }: Problem) =>
-  `${FIELD_LABELS[field]}: ${PAGE_MESSAGES[code] ?? message}`;
