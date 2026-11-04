@@ -14,6 +14,7 @@ RUN rustup component add clippy rustfmt \
     && cargo install wasm-pack --locked
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY .cargo .cargo
 COPY crates crates
 
 FROM toolchain AS test

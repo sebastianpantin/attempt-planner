@@ -1,3 +1,4 @@
+mod days;
 pub mod evaluate;
 pub mod lift;
 pub mod minimize;

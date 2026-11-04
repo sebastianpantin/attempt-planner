@@ -1,13 +1,17 @@
+use std::cell::RefCell;
 use std::fmt;
+use std::sync::Arc;
 
 use rand::{RngExt, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, StandardNormal};
+use rand_xoshiro::Xoshiro256PlusPlus;
 
+use crate::days::{HEAVIEST_STEPS, LiftDays, StepPlan, goal_steps, sum_or_zero};
 use crate::lift::{Lift, PerLift};
 use crate::model::{DayForm, MakeRateCurve};
+use crate::outcome::is_valid_bomb_out_cap;
 use crate::plan::{LiftPlan, PlanStep};
-use crate::rules::{ATTEMPTS_PER_LIFT, Attempt, BAR, RuleViolation, Weight, best_attempt};
+use crate::rules::{ATTEMPTS_PER_LIFT, BAR, PLATE_STEP, RuleViolation, Weight, best_attempt};
 
 pub const MAX_SIMULATIONS: u32 = 1_000_000;
 
@@ -278,27 +282,11 @@ pub struct Evaluation {
     pub lifts: PerLift<LiftSummary>,
 }
 
-/// One simulated meet day: for each lift, the make threshold of each attempt.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeetDay {
-    /// The load below which each attempt is made. Minus infinity for a technical miss,
-    /// which no load can make.
-    pub make_thresholds_kg: PerLift<[f64; ATTEMPTS_PER_LIFT]>,
-    /// Which attempts are technical misses.
-    pub technical_misses: PerLift<[bool; ATTEMPTS_PER_LIFT]>,
-}
-
-impl MeetDay {
-    /// The best made attempt of one lift on this day, or `None` when it has no make.
-    pub fn best(&self, lift: Lift, plan: &LiftPlan) -> Option<Weight> {
-        best_attempt(&plan.attempts(*self.make_thresholds_kg.get(lift)))
-    }
-}
-
 /// A seeded set of simulated meet days for one lifter. Every plan evaluated against the
 /// same `MeetDays` sees exactly the same days, so differences between plans are not noise.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MeetDays {
+    lifts: PerLift<LiftDays>,
     lifter: Lifter,
     simulations: u32,
     seed: u64,
@@ -310,44 +298,90 @@ impl MeetDays {
         if !problems.is_empty() {
             return Err(problems);
         }
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+        let draws = lifter.day_form.draw_weights();
+        let mut lifts = PerLift::from_fn(|_| LiftDays::with_capacity(simulations as usize));
+        for _ in 0..simulations {
+            let shared: f64 = StandardNormal.sample(&mut rng);
+            for (lift, model) in lifter.lifts.iter() {
+                let own = StandardNormal.sample(&mut rng);
+                let day_max_kg = draws.day_max(model.expected_max.kg(), shared, own);
+                let curve = &model.curve;
+                let technical: [bool; ATTEMPTS_PER_LIFT] =
+                    std::array::from_fn(|_| rng.random::<f64>() < curve.technical_miss_chance);
+                let thresholds_kg = technical.map(|technical| {
+                    let roll = rng.random();
+                    if technical {
+                        f64::NEG_INFINITY
+                    } else {
+                        curve.make_threshold_kg(day_max_kg, roll)
+                    }
+                });
+                lifts.get_mut(lift).push(thresholds_kg, technical);
+            }
+        }
         Ok(Self {
+            lifts,
             lifter,
             simulations,
             seed,
         })
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = MeetDay> + '_ {
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
-        let expected_kg = self.lifter.lifts.map(|_, lift| lift.expected_max.kg());
-        (0..self.simulations).map(move |_| {
-            let shared: f64 = StandardNormal.sample(&mut rng);
-            let own = PerLift::from_fn(|_| StandardNormal.sample(&mut rng));
-            let day_max_kg = self.lifter.day_form.day_maxes(&expected_kg, shared, &own);
-            let strength_rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]> =
-                PerLift::from_fn(|_| rng.random());
-            let technical_rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]> =
-                PerLift::from_fn(|_| rng.random());
-            let technical_misses = technical_rolls.map(|lift, rolls| {
-                let chance = self.lifter.lifts.get(lift).curve.technical_miss_chance;
-                rolls.map(|roll| roll < chance)
-            });
-            MeetDay {
-                make_thresholds_kg: strength_rolls.map(|lift, rolls| {
-                    let curve = &self.lifter.lifts.get(lift).curve;
-                    let day_max_kg = *day_max_kg.get(lift);
-                    let technical = technical_misses.get(lift);
-                    std::array::from_fn(|attempt| {
-                        if technical[attempt] {
-                            f64::NEG_INFINITY
-                        } else {
-                            curve.make_threshold_kg(day_max_kg, rolls[attempt])
-                        }
-                    })
-                }),
-                technical_misses,
+    /// Like [`new`](Self::new), but hands back the days from the last call on this thread
+    /// when the lifter, simulations and seed are the same. Simulating the days is most of
+    /// the work of scoring a plan, and a page asks again for the same lifter each time a
+    /// plan changes.
+    pub fn shared(
+        lifter: Lifter,
+        simulations: u32,
+        seed: u64,
+    ) -> Result<Arc<Self>, Vec<InputProblem>> {
+        thread_local! {
+            static LAST: RefCell<Option<Arc<MeetDays>>> = const { RefCell::new(None) };
+        }
+        LAST.with_borrow_mut(|last| {
+            let same = |days: &&Arc<MeetDays>| {
+                days.lifter == lifter && days.simulations == simulations && days.seed == seed
+            };
+            if let Some(days) = last.as_ref().filter(same) {
+                return Ok(Arc::clone(days));
             }
+            *last = None;
+            let days = Arc::new(Self::new(lifter, simulations, seed)?);
+            *last = Some(Arc::clone(&days));
+            Ok(days)
         })
+    }
+
+    /// Like [`shared`](Self::shared), and also checks the bomb-out cap that goes with them.
+    pub(crate) fn shared_with_cap(
+        lifter: Lifter,
+        simulations: u32,
+        seed: u64,
+        bomb_out_cap: Option<f64>,
+    ) -> Result<Arc<Self>, Vec<InputProblem>> {
+        let days = Self::shared(lifter, simulations, seed);
+        if is_valid_bomb_out_cap(bomb_out_cap) {
+            return days;
+        }
+        let mut problems = days.err().unwrap_or_default();
+        problems.push(InputProblem::InvalidBombOutCap);
+        Err(problems)
+    }
+
+    /// The lifter the days were simulated for.
+    pub fn lifter(&self) -> &Lifter {
+        &self.lifter
+    }
+
+    pub(crate) fn lifts(&self) -> &PerLift<LiftDays> {
+        &self.lifts
+    }
+
+    /// How many days there are.
+    pub(crate) fn len(&self) -> usize {
+        self.simulations as usize
     }
 
     pub fn evaluate(
@@ -359,12 +393,26 @@ impl MeetDays {
         if !problems.is_empty() {
             return Err(problems);
         }
-        let mut tally = Tally::new(self.simulations);
-        for day in self.iter() {
-            let attempts = plans.map(|lift, plan| plan.attempts(*day.make_thresholds_kg.get(lift)));
-            tally.record(&attempts, &day.technical_misses);
+        let mut bests = PerLift::from_fn(|_| vec![0; self.len()]);
+        let mut best_counts = PerLift::from_fn(|_| vec![0; HEAVIEST_STEPS + 1]);
+        let outcomes = PerLift::from_fn(|lift| {
+            let plan = StepPlan::new(plans.get(lift));
+            let (bests, counts) = (bests.get_mut(lift), best_counts.get_mut(lift));
+            self.lifts.get(lift).outcomes(&plan, bests, counts)
+        });
+        let mut totals = vec![0; ATTEMPTS_PER_LIFT * HEAVIEST_STEPS + 1];
+        let days = bests.squat.iter().zip(&bests.bench).zip(&bests.deadlift);
+        for ((&squat, &bench), &deadlift) in days {
+            totals[usize::from(sum_or_zero([squat, bench, deadlift]))] += 1;
         }
-        Ok(tally.finish(plans, goal))
+        Ok(summarise(
+            &totals,
+            &best_counts,
+            &outcomes,
+            plans,
+            goal,
+            self.simulations,
+        ))
     }
 }
 
@@ -375,7 +423,8 @@ pub fn evaluate(input: &EvaluateInput) -> Result<Evaluation, Vec<InputProblem>> 
     if !problems.is_empty() {
         return Err(problems);
     }
-    MeetDays::new(input.lifter, input.simulations, input.seed)?.evaluate(&input.plans, input.goal)
+    MeetDays::shared(input.lifter, input.simulations, input.seed)?
+        .evaluate(&input.plans, input.goal)
 }
 
 fn setup_problems(lifter: &Lifter, simulations: u32) -> Vec<InputProblem> {
@@ -412,140 +461,104 @@ pub(crate) fn plan_problems(plans: &PerLift<LiftPlan>) -> Vec<InputProblem> {
         .collect()
 }
 
-/// Running counts over simulated meets, with a bomb-out recorded as a zero total.
-struct Tally {
-    totals: Vec<Weight>,
-    /// Each lift's best attempt in every meet where it had a make.
-    bests: PerLift<Vec<Weight>>,
-    strength_misses: PerLift<u32>,
-    technical_misses: PerLift<u32>,
-    /// How often each path came up, indexed by `path_index`.
-    paths: PerLift<[u32; PATHS]>,
-    technical_bomb_outs: PerLift<u32>,
-}
-
 /// Bit `i` is set when attempt `i` was made.
-fn path_index(attempts: &[Attempt; ATTEMPTS_PER_LIFT]) -> usize {
-    attempts
-        .iter()
-        .enumerate()
-        .filter(|(_, attempt)| attempt.made)
-        .map(|(i, _)| 1 << i)
-        .sum()
-}
+const MADE: u8 = (1 << ATTEMPTS_PER_LIFT) - 1;
 
-impl Tally {
-    fn new(simulations: u32) -> Self {
-        Self {
-            totals: Vec::with_capacity(simulations as usize),
-            bests: PerLift::from_fn(|_| Vec::new()),
-            strength_misses: PerLift::from_fn(|_| 0),
-            technical_misses: PerLift::from_fn(|_| 0),
-            paths: PerLift::from_fn(|_| [0; PATHS]),
-            technical_bomb_outs: PerLift::from_fn(|_| 0),
-        }
-    }
+/// Summarises the counts of each total and of each lift's best attempt, both indexed by
+/// plate steps with 0 for a bomb-out, and each lift's days counted by the attempts made
+/// and missed technically (see [`LiftDays::outcomes`]).
+fn summarise(
+    totals: &[u32],
+    best_counts: &PerLift<Vec<u32>>,
+    outcomes: &PerLift<[u32; 64]>,
+    plans: &PerLift<LiftPlan>,
+    goal: Option<Weight>,
+    simulations: u32,
+) -> Evaluation {
+    let runs = f64::from(simulations);
+    let step_kg = PLATE_STEP.kg();
+    let bomb_outs = totals[0];
+    let (total_steps, total_steps_squared) =
+        (0_u64..)
+            .zip(totals)
+            .fold((0, 0), |(sum, squares), (steps, &count)| {
+                let count = u64::from(count);
+                (sum + steps * count, squares + steps * steps * count)
+            });
+    let expected_total_kg = total_steps as f64 * step_kg / runs;
+    let variance = (total_steps_squared as f64 * step_kg * step_kg / runs
+        - expected_total_kg * expected_total_kg)
+        .max(0.0);
+    let completed = simulations - bomb_outs;
 
-    fn record(
-        &mut self,
-        attempts: &PerLift<[Attempt; ATTEMPTS_PER_LIFT]>,
-        technical_misses: &PerLift<[bool; ATTEMPTS_PER_LIFT]>,
-    ) {
-        for (lift, attempts) in attempts.iter() {
-            for (attempt, technical) in attempts.iter().zip(technical_misses.get(lift)) {
-                if !attempt.made {
-                    let misses = if *technical {
-                        &mut self.technical_misses
-                    } else {
-                        &mut self.strength_misses
-                    };
-                    *misses.get_mut(lift) += 1;
+    let bomb_out_probability = f64::from(bomb_outs) / runs;
+    let goal_probability = goal.map(|goal| {
+        let from = usize::from(goal_steps(Some(goal)));
+        let met: u32 = totals.get(from..).unwrap_or_default().iter().sum();
+        f64::from(met) / runs
+    });
+    let proportion_error = |p: f64| (p * (1.0 - p) / runs).sqrt();
+    let percentile = |quantile: f64| nearest_rank(totals, 0, quantile);
+    let shares = (0_u32..)
+        .zip(totals)
+        .filter(|(_, count)| **count > 0)
+        .map(|(steps, &count)| TotalShare {
+            total_kg: f64::from(steps) * step_kg,
+            share: f64::from(count) / runs,
+        })
+        .collect();
+
+    Evaluation {
+        bomb_out_probability,
+        goal_probability,
+        expected_total_kg,
+        expected_total_without_bomb_out_kg: (completed > 0)
+            .then(|| total_steps as f64 * step_kg / f64::from(completed)),
+        total_percentiles_kg: Percentiles {
+            p10: percentile(0.1),
+            p50: percentile(0.5),
+            p90: percentile(0.9),
+        },
+        totals: shares,
+        standard_errors: StandardErrors {
+            bomb_out_probability: proportion_error(bomb_out_probability),
+            goal_probability: goal_probability.map(proportion_error),
+            expected_total_kg: (variance / runs).sqrt(),
+        },
+        lifts: best_counts.map(|lift, best_counts| {
+            let mut path_counts = [0; PATHS];
+            let mut strength_misses = 0;
+            let mut technical_misses = 0;
+            let mut technical_bomb_outs = 0;
+            for (outcome, &count) in (0_u8..).zip(outcomes.get(lift)) {
+                let made = outcome & MADE;
+                let technical = outcome >> ATTEMPTS_PER_LIFT;
+                path_counts[usize::from(made)] += count;
+                strength_misses += count * (!made & !technical & MADE).count_ones();
+                technical_misses += count * technical.count_ones();
+                if made == 0 && technical != 0 {
+                    technical_bomb_outs += count;
                 }
             }
-        }
-        let bests = attempts.map(|_, attempts| best_attempt(attempts));
-        for (lift, best) in bests.iter() {
-            let path = path_index(attempts.get(lift));
-            self.paths.get_mut(lift)[path] += 1;
-            match best {
-                Some(best) => self.bests.get_mut(lift).push(*best),
-                None if technical_misses.get(lift).contains(&true) => {
-                    *self.technical_bomb_outs.get_mut(lift) += 1;
-                }
-                None => {}
+            let attempts = runs * ATTEMPTS_PER_LIFT as f64;
+            let paths = attempt_paths(plans.get(lift), &path_counts, runs);
+            let made = simulations - best_counts[0];
+            LiftSummary {
+                make_probability: f64::from(made) / runs,
+                median_best_kg: (made > 0).then(|| nearest_rank(best_counts, 1, 0.5)),
+                strength_miss_rate: f64::from(strength_misses) / attempts,
+                technical_miss_rate: f64::from(technical_misses) / attempts,
+                attempt_make_probabilities: std::array::from_fn(|attempt| {
+                    paths
+                        .iter()
+                        .filter(|p| p.made[attempt])
+                        .map(|p| p.share)
+                        .sum()
+                }),
+                technical_bomb_out_probability: f64::from(technical_bomb_outs) / runs,
+                paths,
             }
-        }
-        let total = bests.iter().map(|(_, best)| *best).sum::<Option<Weight>>();
-        self.totals.push(total.unwrap_or(Weight::ZERO));
-    }
-
-    fn finish(mut self, plans: &PerLift<LiftPlan>, goal: Option<Weight>) -> Evaluation {
-        self.totals.sort_unstable();
-        for lift in Lift::ALL {
-            self.bests.get_mut(lift).sort_unstable();
-        }
-        let totals = &self.totals;
-        let runs = totals.len() as f64;
-        let bomb_outs = totals.partition_point(|&t| t == Weight::ZERO);
-        let completed = &totals[bomb_outs..];
-        let total_kg: f64 = totals.iter().map(|t| t.kg()).sum();
-        let total_kg_squared: f64 = totals.iter().map(|t| t.kg() * t.kg()).sum();
-        let expected_total_kg = total_kg / runs;
-        let variance = (total_kg_squared / runs - expected_total_kg * expected_total_kg).max(0.0);
-
-        let bomb_out_probability = bomb_outs as f64 / runs;
-        let goal_probability = goal.map(|goal| {
-            let met = completed.len() - completed.partition_point(|&t| t < goal);
-            met as f64 / runs
-        });
-        let proportion_error = |p: f64| (p * (1.0 - p) / runs).sqrt();
-        let percentile = |quantile: f64| nearest_rank(totals, quantile).kg();
-        let shares = totals
-            .chunk_by(|a, b| a == b)
-            .map(|same| TotalShare {
-                total_kg: same[0].kg(),
-                share: same.len() as f64 / runs,
-            })
-            .collect();
-
-        Evaluation {
-            bomb_out_probability,
-            goal_probability,
-            expected_total_kg,
-            expected_total_without_bomb_out_kg: (!completed.is_empty())
-                .then(|| total_kg / completed.len() as f64),
-            total_percentiles_kg: Percentiles {
-                p10: percentile(0.1),
-                p50: percentile(0.5),
-                p90: percentile(0.9),
-            },
-            totals: shares,
-            standard_errors: StandardErrors {
-                bomb_out_probability: proportion_error(bomb_out_probability),
-                goal_probability: goal_probability.map(proportion_error),
-                expected_total_kg: (variance / runs).sqrt(),
-            },
-            lifts: self.bests.map(|lift, bests| {
-                let attempts = runs * ATTEMPTS_PER_LIFT as f64;
-                let paths = attempt_paths(plans.get(lift), self.paths.get(lift), runs);
-                LiftSummary {
-                    make_probability: bests.len() as f64 / runs,
-                    median_best_kg: (!bests.is_empty()).then(|| nearest_rank(bests, 0.5).kg()),
-                    strength_miss_rate: f64::from(*self.strength_misses.get(lift)) / attempts,
-                    technical_miss_rate: f64::from(*self.technical_misses.get(lift)) / attempts,
-                    attempt_make_probabilities: std::array::from_fn(|attempt| {
-                        paths
-                            .iter()
-                            .filter(|p| p.made[attempt])
-                            .map(|p| p.share)
-                            .sum()
-                    }),
-                    technical_bomb_out_probability: f64::from(*self.technical_bomb_outs.get(lift))
-                        / runs,
-                    paths,
-                }
-            }),
-        }
+        }),
     }
 }
 
@@ -570,10 +583,21 @@ fn attempt_paths(plan: &LiftPlan, counts: &[u32; PATHS], runs: f64) -> [AttemptP
     paths
 }
 
-/// The nearest-rank quantile of sorted, non-empty weights.
-fn nearest_rank(sorted: &[Weight], quantile: f64) -> Weight {
-    let rank = (quantile * sorted.len() as f64).ceil() as usize;
-    sorted[rank.clamp(1, sorted.len()) - 1]
+/// The nearest-rank quantile in kg of the weights counted in `counts` by plate steps,
+/// leaving out those under `from` steps. At least one weight must be counted from there.
+fn nearest_rank(counts: &[u32], from: usize, quantile: f64) -> f64 {
+    let counts = &counts[from..];
+    let counted: u32 = counts.iter().sum();
+    let rank = ((quantile * f64::from(counted)).ceil() as u32).clamp(1, counted);
+    let mut seen = 0;
+    let index = counts
+        .iter()
+        .position(|&count| {
+            seen += count;
+            seen >= rank
+        })
+        .expect("a weight is counted");
+    (from + index) as f64 * PLATE_STEP.kg()
 }
 
 #[cfg(test)]
@@ -822,6 +846,31 @@ mod tests {
         assert_eq!(first.lifts.bench, second.lifts.bench);
         assert_eq!(first.lifts.deadlift, second.lifts.deadlift);
         assert_eq!(days.evaluate(&meet.plans, None), evaluate(&meet));
+    }
+
+    #[test]
+    fn shared_days_are_reused_only_for_the_same_lifter_simulations_and_seed() {
+        let meet = uncertain_meet(25.0, 0.04);
+        let shared =
+            |lifter, simulations, seed| MeetDays::shared(lifter, simulations, seed).unwrap();
+        let days = shared(meet.lifter, meet.simulations, meet.seed);
+        assert_eq!(
+            *days,
+            MeetDays::new(meet.lifter, meet.simulations, meet.seed).unwrap()
+        );
+        assert!(Arc::ptr_eq(
+            &days,
+            &shared(meet.lifter, meet.simulations, meet.seed)
+        ));
+        let mut stronger = meet.lifter;
+        stronger.lifts.squat.expected_max = kg(205.0);
+        for other in [
+            shared(stronger, meet.simulations, meet.seed),
+            shared(meet.lifter, meet.simulations + 1, meet.seed),
+            shared(meet.lifter, meet.simulations, meet.seed + 1),
+        ] {
+            assert!(!Arc::ptr_eq(&days, &other));
+        }
     }
 
     #[test]

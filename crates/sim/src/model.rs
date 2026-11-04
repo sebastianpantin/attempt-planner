@@ -1,4 +1,3 @@
-use crate::lift::PerLift;
 use crate::rules::Weight;
 
 /// Chance of making a lift as a logistic function of load ÷ day max.
@@ -68,20 +67,14 @@ impl DayForm {
     pub const MAX_SPREAD: f64 = 0.5;
     const MIN_DAY_MAX_FRACTION: f64 = 0.01;
 
-    /// Day max for each lift, from standard normal draws for the shared and per-lift parts.
-    pub fn day_maxes(
-        &self,
-        expected_kg: &PerLift<f64>,
-        shared: f64,
-        own: &PerLift<f64>,
-    ) -> PerLift<f64> {
-        let shared_weight = self.correlation.sqrt();
-        let own_weight = (1.0 - self.correlation).sqrt();
+    /// How much the shared and the per-lift draw each move a day max, worked out once for
+    /// many days.
+    pub(crate) fn draw_weights(&self) -> DrawWeights {
         let spread = self.total_spread();
-        expected_kg.map(|lift, &expected| {
-            let deviation = spread * (shared_weight * shared + own_weight * own.get(lift));
-            (expected * (1.0 + deviation)).max(expected * Self::MIN_DAY_MAX_FRACTION)
-        })
+        DrawWeights {
+            shared: spread * self.correlation.sqrt(),
+            own: spread * (1.0 - self.correlation).sqrt(),
+        }
     }
 
     /// The standard deviation of the day max around the expected max, both parts together.
@@ -97,9 +90,35 @@ impl DayForm {
     }
 }
 
+/// See [`DayForm::draw_weights`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DrawWeights {
+    shared: f64,
+    own: f64,
+}
+
+impl DrawWeights {
+    /// One lift's day max from standard normal draws for the shared and the lift's own part.
+    pub(crate) fn day_max(&self, expected_kg: f64, shared: f64, own: f64) -> f64 {
+        let deviation = self.shared * shared + self.own * own;
+        (expected_kg * (1.0 + deviation)).max(expected_kg * DayForm::MIN_DAY_MAX_FRACTION)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lift::PerLift;
+
+    fn day_maxes(
+        form: &DayForm,
+        expected_kg: &PerLift<f64>,
+        shared: f64,
+        own: &PerLift<f64>,
+    ) -> PerLift<f64> {
+        let draws = form.draw_weights();
+        expected_kg.map(|lift, &expected| draws.day_max(expected, shared, *own.get(lift)))
+    }
     use crate::testing::kg;
 
     const CURVE: MakeRateCurve = MakeRateCurve {
@@ -203,7 +222,7 @@ mod tests {
             deadlift: 240.0,
         };
         let own = PerLift::from_fn(|_| 1.7);
-        assert_eq!(form.day_maxes(&expected, -2.0, &own), expected);
+        assert_eq!(day_maxes(&form, &expected, -2.0, &own), expected);
     }
 
     #[test]
@@ -219,7 +238,7 @@ mod tests {
             bench: -3.0,
             deadlift: 0.0,
         };
-        let maxes = form.day_maxes(&expected, -1.0, &own);
+        let maxes = day_maxes(&form, &expected, -1.0, &own);
         for (_, max) in maxes.iter() {
             assert!((max - 190.0).abs() < 1e-9);
         }
@@ -238,7 +257,7 @@ mod tests {
             bench: -1.0,
             deadlift: 0.0,
         };
-        let maxes = form.day_maxes(&expected, 3.0, &own);
+        let maxes = day_maxes(&form, &expected, 3.0, &own);
         assert!((maxes.squat - 210.0).abs() < 1e-9);
         assert!((maxes.bench - 190.0).abs() < 1e-9);
         assert!((maxes.deadlift - 200.0).abs() < 1e-9);
@@ -252,7 +271,8 @@ mod tests {
             correlation: 1.0,
         };
         assert!((form.total_spread() - 0.05).abs() < 1e-12);
-        let maxes = form.day_maxes(
+        let maxes = day_maxes(
+            &form,
             &PerLift::from_fn(|_| 200.0),
             1.0,
             &PerLift::from_fn(|_| 0.0),
@@ -267,7 +287,8 @@ mod tests {
             max_uncertainty: 0.0,
             correlation: 1.0,
         };
-        let maxes = form.day_maxes(
+        let maxes = day_maxes(
+            &form,
             &PerLift::from_fn(|_| 200.0),
             -10.0,
             &PerLift::from_fn(|_| 0.0),

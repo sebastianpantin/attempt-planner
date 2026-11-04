@@ -22,7 +22,7 @@ Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and ev
 - **Day form.** Nobody hits exactly their expected max on the day. Each simulated meet draws a day max for every lift: the expected max times 1 plus a normal draw. Its spread combines two things: how much strength moves from day to day (3% by default) and how far off the expected max itself may be (3% by default; lower it when the max comes from a recent test or meet). The three lifts share part of that draw (correlation 0.4 by default), because a good day for the squat tends to be a good day for the deadlift.
 - **Two kinds of miss.** A strength miss happens when the load is too heavy for the day: the chance of making an attempt falls along a logistic curve as the load nears and passes the day max, set by the load ÷ day max ratio with a 50% make rate and how steeply the chance falls around it. A technical miss, like a depth call or a missed command, is a fixed chance per attempt whatever the load. Results show each lift's share of attempts missed each way. Attempts are independent once the day max is drawn; there is no fatigue.
 - **Plans.** The 2nd and 3rd attempts react to the attempt before: a jump after a make and a jump after a miss (0 repeats the weight). Missing all three attempts of a lift is a bomb-out, counted as a total of 0.
-- **Same days for every plan.** Every plan is scored against the same seeded simulated days, so differences between plans are not luck of the draw. Each roll becomes the weight below which that attempt is made, so scoring a plan only compares weights.
+- **Same days for every plan.** Every plan is scored against the same seeded simulated days, so differences between plans are not luck of the draw. Each roll becomes the weight in plate steps from which that attempt is missed, stored in one array per lift and attempt, so scoring a plan is a pass of whole-number comparisons over arrays that runs on several days at once (SIMD). The days are simulated once per lifter and reused while only the plans change.
 - **Search.** Starts from the best plan in the tradeoff family, then changes one setting of one lift at a time and keeps any change that ranks higher, until a whole round changes nothing. It picks and reports plans on the same 20,000 meets, so its figures are slightly optimistic; precise mode re-checks a plan on more meets.
 
 The day form and make-rate numbers are inputs under "Advanced".
@@ -104,6 +104,7 @@ docker build --target web .    # page: format, type-check, tests, build
 
 ```sh
 cargo test --workspace
+cargo run --release -p attempt-sim --example timings   # how long each engine call takes
 ```
 
 To work on the page, build the WebAssembly package into `web/pkg`, then start the Vite dev server. This needs Node 24, the `wasm32-unknown-unknown` target and [wasm-pack](https://github.com/drager/wasm-pack):

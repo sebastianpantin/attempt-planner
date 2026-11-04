@@ -1,0 +1,4 @@
+# 128-bit SIMD lets the plan-scoring loops in `crates/sim/src/days.rs` handle eight days at
+# once. Every current browser supports it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
