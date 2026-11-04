@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
-use attempt_sim_wasm::dto::{EvaluateRequest, TradeoffRequest};
-use attempt_sim_wasm::{evaluate, tradeoff};
+use attempt_sim_wasm::dto::{EvaluateRequest, SearchRequest, TradeoffRequest};
+use attempt_sim_wasm::{PlanSearch, evaluate, tradeoff};
 use js_sys::JSON;
 use tsify::Ts;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -85,4 +85,33 @@ fn sweeps_the_plan_family_with_camel_case_fields() {
     );
     assert!(json.contains(r#""onFrontier":true"#), "{json}");
     assert!(json.contains(r#""bestForGoal":"#), "{json}");
+}
+
+fn search_request(json: &str) -> Ts<SearchRequest> {
+    Ts::new_unchecked(JSON::parse(json).unwrap())
+}
+
+#[wasm_bindgen_test]
+fn a_search_steps_until_done() {
+    let request = REQUEST.replace(
+        r#""seed": 7"#,
+        r#""seed": 7, "goalKg": 560, "bombOutCap": 0.05"#,
+    );
+    let mut search = PlanSearch::new(search_request(&request)).unwrap();
+    let json = loop {
+        let progress = search.step().unwrap();
+        let json: String = JSON::stringify(&progress.js_value()).unwrap().into();
+        if json.contains(r#""done":true"#) {
+            break json;
+        }
+    };
+    assert!(json.starts_with(r#"{"round":"#), "{json}");
+    assert!(json.contains(r#""plans":{"squat":{"openerKg":"#), "{json}");
+    assert!(json.contains(r#""goalProbability":"#), "{json}");
+}
+
+#[wasm_bindgen_test]
+fn a_search_with_an_invalid_cap_throws_its_problem() {
+    let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "bombOutCap": 3"#);
+    assert!(PlanSearch::new(search_request(&request)).is_err());
 }

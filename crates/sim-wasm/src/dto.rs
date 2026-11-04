@@ -5,6 +5,7 @@ use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::plan::{Jumps, LiftPlan};
 use attempt_sim::rules::Weight;
+use attempt_sim::search::{self, Search, SearchInput};
 use attempt_sim::tradeoff::{self, PlanShape, TradeoffInput};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -185,6 +186,75 @@ pub fn tradeoff(request: &TradeoffRequest) -> TradeoffResponse {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchRequest {
+    pub lifter: LifterInput,
+    /// Plans to start from as well as the tradeoff family. Ignored when invalid.
+    pub plans: PerLift<LiftPlanKg>,
+    #[serde(default)]
+    #[tsify(optional)]
+    pub goal_kg: Option<f64>,
+    /// Highest acceptable chance of bombing out, from 0 to 1.
+    #[serde(default)]
+    #[tsify(optional)]
+    pub bomb_out_cap: Option<f64>,
+    pub simulations: u32,
+    pub seed: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchProgress {
+    /// The round in progress, from 1.
+    pub round: u32,
+    pub done: bool,
+    /// The best plans so far and how they did on the search's simulated meets.
+    pub plans: PerLift<LiftPlanKg>,
+    pub bomb_out_probability: f64,
+    pub expected_total_kg: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub goal_probability: Option<f64>,
+}
+
+impl From<search::SearchProgress> for SearchProgress {
+    fn from(progress: search::SearchProgress) -> Self {
+        let best = progress.best;
+        Self {
+            round: progress.round,
+            done: progress.done,
+            plans: best.plans.map(|_, &plan| plan.into()),
+            bomb_out_probability: best.outcome.bomb_out_probability,
+            expected_total_kg: best.outcome.expected_total_kg,
+            goal_probability: best.outcome.goal_probability,
+        }
+    }
+}
+
+/// Converts the request and sets up a search, or returns every problem with the input.
+pub fn start_search(request: &SearchRequest) -> Result<Search, Vec<Problem>> {
+    let mut problems = Vec::new();
+    let lifter = read_lifter(&mut problems, &request.lifter);
+    let goal = read_goal(&mut problems, request.goal_kg);
+    let mut ignored = Vec::new();
+    let start = read_plans(&mut ignored, &request.plans);
+    let input = SearchInput {
+        lifter,
+        start: ignored.is_empty().then_some(start),
+        goal,
+        bomb_out_cap: request.bomb_out_cap,
+        simulations: request.simulations,
+        seed: u64::from(request.seed),
+    };
+    let search = if problems.is_empty() {
+        Search::new(&input)
+    } else {
+        Err(problems)
+    };
+    search.map_err(|problems| problems.into_iter().map(Problem::from).collect())
+}
+
 fn to_tradeoff_input(request: &TradeoffRequest) -> Result<TradeoffInput, Vec<InputProblem>> {
     let mut problems = Vec::new();
     let lifter = read_lifter(&mut problems, &request.lifter);
@@ -197,6 +267,21 @@ fn to_tradeoff_input(request: &TradeoffRequest) -> Result<TradeoffInput, Vec<Inp
         goal,
         simulations: request.simulations,
         seed: u64::from(request.seed),
+    })
+}
+
+fn read_plans(problems: &mut Vec<InputProblem>, plans: &PerLift<LiftPlanKg>) -> PerLift<LiftPlan> {
+    plans.map(|lift, plan| {
+        let opener = read_weight(problems, plan.opener_kg, Some(lift), InputField::Opener);
+        let mut jumps = |input: JumpsKg, field| Jumps {
+            after_make: read_weight(problems, input.after_make_kg, Some(lift), field),
+            after_miss: read_weight(problems, input.after_miss_kg, Some(lift), field),
+        };
+        LiftPlan {
+            opener,
+            second: jumps(plan.second, InputField::Second),
+            third: jumps(plan.third, InputField::Third),
+        }
     })
 }
 
@@ -223,23 +308,7 @@ fn read_goal(problems: &mut Vec<InputProblem>, goal_kg: Option<f64>) -> Option<W
 fn to_input(request: &EvaluateRequest) -> Result<EvaluateInput, Vec<InputProblem>> {
     let mut problems = Vec::new();
     let lifter = read_lifter(&mut problems, &request.lifter);
-    let plans = request.plans.map(|lift, plan| {
-        let opener = read_weight(
-            &mut problems,
-            plan.opener_kg,
-            Some(lift),
-            InputField::Opener,
-        );
-        let mut jumps = |input: JumpsKg, field| Jumps {
-            after_make: read_weight(&mut problems, input.after_make_kg, Some(lift), field),
-            after_miss: read_weight(&mut problems, input.after_miss_kg, Some(lift), field),
-        };
-        LiftPlan {
-            opener,
-            second: jumps(plan.second, InputField::Second),
-            third: jumps(plan.third, InputField::Third),
-        }
-    });
+    let plans = read_plans(&mut problems, &request.plans);
     let goal = read_goal(&mut problems, request.goal_kg);
     if !problems.is_empty() {
         return Err(problems);
@@ -499,6 +568,60 @@ mod tests {
             problems(&request),
             [(Some(Lift::Bench), InputField::ExpectedMax)]
         );
+    }
+
+    fn search_request() -> SearchRequest {
+        let request = tradeoff_request(Some(550.0));
+        SearchRequest {
+            lifter: request.lifter,
+            plans: super::tests::request().plans,
+            goal_kg: request.goal_kg,
+            bomb_out_cap: Some(0.05),
+            simulations: 500,
+            seed: 7,
+        }
+    }
+
+    fn run(mut search: Search) -> SearchProgress {
+        loop {
+            let progress = SearchProgress::from(search.step());
+            if progress.done {
+                return progress;
+            }
+        }
+    }
+
+    #[test]
+    fn searches_from_the_requested_plans_and_reports_kg() {
+        let found = run(start_search(&search_request()).unwrap());
+        assert!(found.bomb_out_probability <= 0.05);
+        assert!(found.goal_probability.is_some());
+        let opener = Weight::from_kg(found.plans.squat.opener_kg).unwrap();
+        assert!(opener.is_loadable());
+    }
+
+    #[test]
+    fn an_unreadable_start_is_ignored() {
+        let mut request = search_request();
+        request.plans.bench.opener_kg = f64::NAN;
+        assert!(run(start_search(&request).unwrap()).done);
+    }
+
+    #[test]
+    fn search_reports_lifter_goal_and_cap_problems() {
+        let mut request = search_request();
+        request.goal_kg = Some(-1.0);
+        let fields = |request: &SearchRequest| -> Vec<_> {
+            start_search(request)
+                .unwrap_err()
+                .into_iter()
+                .map(|p| p.field)
+                .collect()
+        };
+        assert_eq!(fields(&request), [InputField::Goal]);
+        request.goal_kg = None;
+        request.bomb_out_cap = Some(2.0);
+        assert_eq!(fields(&request), [InputField::BombOutCap]);
     }
 
     #[test]
