@@ -1,4 +1,5 @@
 import type { PerLift } from "../pkg/attempt_sim_wasm.js";
+import { listOf } from "./format.ts";
 import { type FormValues, type InputName, inputName, LIFTS } from "./inputs.ts";
 
 export type Sex = "any" | "men" | "women";
@@ -63,6 +64,47 @@ export function calibrationValues(sex: Sex): [InputName, number][] {
     ["maxUncertaintyPercent", calibration.maxUncertaintyPercent],
     ["correlation", calibration.correlation],
   ];
+}
+
+/**
+ * The inputs to set when the lifter group changes from `from` to `to`: those still at
+ * `from`'s value, or empty. `kept` lists the values the lifter changed that now differ
+ * from the new group's.
+ */
+export function switchCalibration(
+  values: FormValues,
+  from: Sex,
+  to: Sex,
+): { changes: [InputName, number][]; kept: InputName[] } {
+  const previous = new Map(calibrationValues(from));
+  const changes: [InputName, number][] = [];
+  const kept: InputName[] = [];
+  for (const [name, value] of calibrationValues(to)) {
+    const current = values[name];
+    if (current === previous.get(name) || Number.isNaN(current)) {
+      changes.push([name, value]);
+    } else if (current !== value) {
+      kept.push(name);
+    }
+  }
+  return { changes, kept };
+}
+
+const CALIBRATED_NAMES = Object.fromEntries([
+  ...LIFTS.flatMap((lift) => [
+    [inputName(lift, "ratioAtHalf"), `${lift} midpoint`],
+    [inputName(lift, "steepness"), `${lift} steepness`],
+    [inputName(lift, "technicalMissPercent"), `${lift} technical-miss chance`],
+  ]),
+  ["spreadPercent", "day-to-day spread"],
+  ["maxUncertaintyPercent", "uncertainty of the expected max"],
+  ["correlation", "correlation"],
+]) as Record<InputName, string>;
+
+/** Tells the lifter which of their own values a group switch left alone. */
+export function describeKept(kept: InputName[]): string {
+  if (kept.length === 0) return "";
+  return `Kept your own ${kept.length === 1 ? "value" : "values"} for ${listOf(kept.map((name) => CALIBRATED_NAMES[name]))}.`;
 }
 
 export const EXAMPLE: FormValues = {

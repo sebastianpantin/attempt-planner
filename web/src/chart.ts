@@ -5,7 +5,7 @@ import { interpolateViridis } from "d3-scale-chromatic";
 import { select } from "d3-selection";
 import { line, symbol, symbolCross } from "d3-shape";
 import * as format from "./format.ts";
-import { highlightedPoints, shapeLabel } from "./tradeoff-view.ts";
+import { highlightedPoints, riskAxis, shapeLabel } from "./tradeoff-view.ts";
 
 export interface ChartData {
   points: TradeoffPoint[];
@@ -38,9 +38,9 @@ export function drawTradeoff(
   const shown = [...points, ...(current ? [current] : [])];
   const risks = shown.map((p) => p.bombOutProbability);
   const totals = shown.map((p) => p.expectedTotalKg);
+  const risk = riskAxis(Math.max(...risks));
   const x = scaleSqrt()
-    .domain([0, Math.max(...risks, 0.01)])
-    .nice()
+    .domain([0, risk.max])
     .range([MARGIN.left, WIDTH - MARGIN.right]);
   const y = scaleLinear()
     .domain([Math.min(...totals) - 2.5, Math.max(...totals) + 2.5])
@@ -57,7 +57,7 @@ export function drawTradeoff(
     .attr("transform", `translate(0,${HEIGHT - MARGIN.bottom})`)
     .call(
       axisBottom(x)
-        .ticks(6)
+        .tickValues(risk.ticks)
         .tickFormat((value) => format.finePercent(Number(value))),
     );
   root

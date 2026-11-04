@@ -17,9 +17,10 @@
       </p>
 
       <div class="layout">
-        <form id="plan" novalidate>
+        <form id="plan" novalidate aria-labelledby="plan-heading">
+          <h2 id="plan-heading">Your plan</h2>
           <fieldset>
-            <legend>Meet</legend>
+            <legend><h3>Meet</h3></legend>
             <label>
               Lifter
               <select name="sex">
@@ -30,51 +31,13 @@
             </label>
             <p class="hint">
               Sets the make-rate and day-form numbers under Advanced to those
-              fitted to that group's meets.
+              fitted to that group's meets, keeping any you changed.
             </p>
+            <p id="sex-status" class="hint" role="status"></p>
             <label>
               Goal total (kg, optional)
               <input name="goalKg" type="number" min="0" step="2.5" />
             </label>
-            <label>
-              <input name="precise" type="checkbox" />
-              Precise: 1,000,000 meets instead of 20,000
-            </label>
-            <ul class="problems" id="meet-problems"></ul>
-          </fieldset>
-
-          <fieldset>
-            <legend>Past meets (optional)</legend>
-            <p class="hint">
-              Estimates your expected maxes from the attempts you took. Paste
-              the CSV from your OpenPowerlifting lifter page, or write one meet
-              per line: the date, then 3 squat, 3 bench and 3 deadlift attempts,
-              with a minus sign for a miss and 0 for an attempt not taken. Only
-              raw meets count, and nothing leaves your browser.
-            </p>
-            <textarea
-              id="past-meets"
-              rows="4"
-              aria-label="Past meets"
-              placeholder="2025-03-15 180 190 -197.5 120 125 -130 220 235 245"
-            ></textarea>
-            <div class="actions">
-              <button type="button" id="estimate-maxes">Estimate maxes</button>
-              <button type="button" id="use-estimate" hidden>
-                Use these maxes
-              </button>
-            </div>
-            <p id="estimate-status" role="status"></p>
-            <ul id="estimate-results"></ul>
-          </fieldset>
-
-          <fieldset>
-            <legend>Find the best plan</legend>
-            <p class="hint">
-              Searches for the openers and jumps with the best chance of
-              reaching the goal, or the highest average total without a goal,
-              and fills them in below.
-            </p>
             <label>
               Highest bomb-out chance (%, optional)
               <input
@@ -85,14 +48,12 @@
                 step="0.5"
               />
             </label>
-            <div class="actions">
-              <button type="button" id="find-plan">Find best plan</button>
-              <button type="button" id="cancel-search" hidden>Cancel</button>
-            </div>
-            <p id="search-status" role="status"></p>
+            <label>
+              <input name="precise" type="checkbox" />
+              Precise: 1,000,000 meets instead of 20,000
+            </label>
+            <ul class="problems" id="meet-problems"></ul>
           </fieldset>
-
-          <div id="lifts"></div>
 
           <details>
             <summary>Advanced</summary>
@@ -141,14 +102,61 @@
               <div id="curves"></div>
             </fieldset>
           </details>
+
+          <details id="past-meets-panel">
+            <summary>Estimate maxes from past meets</summary>
+            <p class="hint">
+              Estimates your expected maxes from the attempts you took. Paste
+              the CSV from your OpenPowerlifting lifter page, or write one meet
+              per line: the date, then 3 squat, 3 bench and 3 deadlift attempts,
+              with a minus sign for a miss and 0 for an attempt not taken. Only
+              raw meets count, and nothing leaves your browser.
+            </p>
+            <p class="hint" id="past-meets-example">
+              For example:
+              <code>2025-03-15 180 190 -197.5 120 125 -130 220 235 245</code>
+            </p>
+            <textarea
+              id="past-meets"
+              rows="4"
+              aria-label="Past meets"
+              aria-describedby="past-meets-example"
+            ></textarea>
+            <div class="actions">
+              <button type="button" id="estimate-maxes">Estimate maxes</button>
+              <button type="button" id="use-estimate" hidden>
+                Use these maxes
+              </button>
+            </div>
+            <p id="estimate-status" role="status"></p>
+            <ul id="estimate-results"></ul>
+          </details>
+
+          <div id="lifts"></div>
         </form>
 
         <div class="side">
+          <section id="search" aria-labelledby="search-heading">
+            <h2 id="search-heading">Find the best plan</h2>
+            <p class="hint">
+              Searches for the openers and jumps with the best chance of
+              reaching the goal, or the highest average total without a goal,
+              keeping under the highest bomb-out chance set for the meet, and
+              fills them in.
+            </p>
+            <div class="actions">
+              <button type="button" id="find-plan">Find best plan</button>
+              <button type="button" id="cancel-search" hidden>Cancel</button>
+            </div>
+            <p id="search-status" role="status"></p>
+          </section>
+
           <section id="results" aria-labelledby="results-heading">
             <h2 id="results-heading">Results</h2>
             <p id="status" role="status"></p>
             <div id="evaluation" hidden>
               <dl id="summary"></dl>
+              <p id="simulation-error" class="hint"></p>
               <table>
                 <caption>
                   Per lift
@@ -189,11 +197,13 @@
                 </li>
                 <li><span class="key-current">+</span> your plan</li>
                 <li id="tradeoff-legend">
-                  <span class="key-best"></span> best plan for the goal; colour
-                  shows the chance of reaching the goal, from
+                  <span class="key-best"></span>
+                  <span id="tradeoff-best-label">best for the goal</span>;
+                  colour shows the chance of reaching the goal, from
                   <span class="key-gradient"></span> 0% to 100%
                 </li>
               </ul>
+              <p id="tradeoff-note" class="hint"></p>
               <table>
                 <caption>
                   Best plans by risk
@@ -214,5 +224,9 @@
         </div>
       </div>
     </main>
+    <aside id="summary-bar" aria-label="Results summary" hidden>
+      <p id="summary-bar-figures"></p>
+      <a href="#results">See results</a>
+    </aside>
   </body>
 </html>

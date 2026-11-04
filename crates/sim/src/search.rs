@@ -106,26 +106,14 @@ pub struct Search {
 
 impl Search {
     pub fn new(input: &SearchInput) -> Result<Self, Vec<InputProblem>> {
-        let cap_is_valid = input
-            .bomb_out_cap
-            .is_none_or(|cap| (0.0..=1.0).contains(&cap));
-        let days = MeetDays::new(input.lifter, input.simulations, input.seed);
-        let days = match (days, cap_is_valid) {
-            (Ok(days), true) => days,
-            (days, _) => {
-                let mut problems = days.err().unwrap_or_default();
-                if !cap_is_valid {
-                    problems.push(InputProblem::InvalidBombOutCap);
-                }
-                return Err(problems);
-            }
-        };
         let family = tradeoff::tradeoff(&TradeoffInput {
             lifter: input.lifter,
             goal: input.goal,
+            bomb_out_cap: input.bomb_out_cap,
             simulations: input.simulations,
             seed: input.seed,
         })?;
+        let days = MeetDays::new(input.lifter, input.simulations, input.seed)?;
 
         let make_thresholds_kg: Vec<_> = days.iter().map(|day| day.make_thresholds_kg).collect();
         let higher = |a: Found, b: Found| {
@@ -409,6 +397,7 @@ mod tests {
         let family = crate::tradeoff::tradeoff(&crate::tradeoff::TradeoffInput {
             lifter: input.lifter,
             goal: input.goal,
+            bomb_out_cap: None,
             simulations: input.simulations,
             seed: input.seed,
         })

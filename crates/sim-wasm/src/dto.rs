@@ -79,6 +79,10 @@ pub struct TradeoffRequest {
     #[serde(default)]
     #[tsify(optional)]
     pub goal_kg: Option<f64>,
+    /// Highest acceptable chance of bombing out, from 0 to 1, for the best plan for the goal.
+    #[serde(default)]
+    #[tsify(optional)]
+    pub bomb_out_cap: Option<f64>,
     pub simulations: u32,
     pub seed: u32,
 }
@@ -163,7 +167,8 @@ pub fn evaluate(request: &EvaluateRequest) -> EvaluateResponse {
 pub enum TradeoffResponse {
     Swept {
         points: Vec<TradeoffPoint>,
-        /// Index into `points` of the plan with the best chance of reaching the goal.
+        /// Index into `points` of the plan within the bomb-out cap with the best chance of
+        /// reaching the goal.
         #[serde(skip_serializing_if = "Option::is_none")]
         #[tsify(optional)]
         best_for_goal: Option<usize>,
@@ -265,6 +270,7 @@ fn to_tradeoff_input(request: &TradeoffRequest) -> Result<TradeoffInput, Vec<Inp
     Ok(TradeoffInput {
         lifter,
         goal,
+        bomb_out_cap: request.bomb_out_cap,
         simulations: request.simulations,
         seed: u64::from(request.seed),
     })
@@ -508,6 +514,7 @@ mod tests {
         TradeoffRequest {
             lifter,
             goal_kg,
+            bomb_out_cap: None,
             simulations: 500,
             seed: 7,
         }
@@ -570,6 +577,9 @@ mod tests {
             problems(&request),
             [(Some(Lift::Bench), InputField::ExpectedMax)]
         );
+        let mut request = tradeoff_request(None);
+        request.bomb_out_cap = Some(2.0);
+        assert_eq!(problems(&request), [(None, InputField::BombOutCap)]);
     }
 
     fn search_request() -> SearchRequest {

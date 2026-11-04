@@ -70,6 +70,8 @@ pub fn plan_family() -> impl Iterator<Item = PlanShape> {
 pub struct TradeoffInput {
     pub lifter: Lifter,
     pub goal: Option<Weight>,
+    /// Highest acceptable chance of bombing out, from 0 to 1, for the best plan for the goal.
+    pub bomb_out_cap: Option<f64>,
     pub simulations: u32,
     pub seed: u64,
 }
@@ -92,8 +94,9 @@ pub struct TradeoffPoint {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tradeoff {
     pub points: Vec<TradeoffPoint>,
-    /// Index of the point with the highest chance of reaching the goal, ties going to the
-    /// higher expected total. Absent without a goal or without points.
+    /// Index of the point within the bomb-out cap with the highest chance of reaching the
+    /// goal, ties going to the higher expected total. Absent without a goal or without a
+    /// point within the cap.
     pub best_for_goal: Option<usize>,
 }
 
@@ -101,7 +104,22 @@ pub struct Tradeoff {
 /// meet days, so the differences between shapes are not noise. Shapes that round to the
 /// same plans as an earlier shape are left out.
 pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
-    let days = MeetDays::new(input.lifter, input.simulations, input.seed)?;
+    let cap_is_valid = input
+        .bomb_out_cap
+        .is_none_or(|cap| (0.0..=1.0).contains(&cap));
+    let days = match (
+        MeetDays::new(input.lifter, input.simulations, input.seed),
+        cap_is_valid,
+    ) {
+        (Ok(days), true) => days,
+        (days, _) => {
+            let mut problems = days.err().unwrap_or_default();
+            if !cap_is_valid {
+                problems.push(InputProblem::InvalidBombOutCap);
+            }
+            return Err(problems);
+        }
+    };
     let mut seen = HashSet::new();
     let candidates: Vec<(PlanShape, PerLift<LiftPlan>)> = plan_family()
         .filter_map(|shape| {
@@ -173,7 +191,9 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
         })
         .collect();
     mark_frontier(&mut points);
-    let best_for_goal = input.goal.and_then(|_| best_for_goal(&points));
+    let best_for_goal = input
+        .goal
+        .and_then(|_| best_for_goal(&points, input.bomb_out_cap));
     Ok(Tradeoff {
         points,
         best_for_goal,
@@ -198,17 +218,19 @@ fn mark_frontier(points: &mut [TradeoffPoint]) {
     }
 }
 
-fn best_for_goal(points: &[TradeoffPoint]) -> Option<usize> {
+fn best_for_goal(points: &[TradeoffPoint], bomb_out_cap: Option<f64>) -> Option<usize> {
     let key = |point: &TradeoffPoint| {
         (
             point.goal_probability.unwrap_or(0.0),
             point.expected_total_kg,
         )
     };
-    (0..points.len()).max_by(|&a, &b| {
-        let ((goal_a, total_a), (goal_b, total_b)) = (key(&points[a]), key(&points[b]));
-        goal_a.total_cmp(&goal_b).then(total_a.total_cmp(&total_b))
-    })
+    (0..points.len())
+        .filter(|&index| bomb_out_cap.is_none_or(|cap| points[index].bomb_out_probability <= cap))
+        .max_by(|&a, &b| {
+            let ((goal_a, total_a), (goal_b, total_b)) = (key(&points[a]), key(&points[b]));
+            goal_a.total_cmp(&goal_b).then(total_a.total_cmp(&total_b))
+        })
 }
 
 #[cfg(test)]
@@ -245,6 +267,7 @@ mod tests {
         TradeoffInput {
             lifter: lifter(0.03),
             goal: goal.map(kg),
+            bomb_out_cap: None,
             simulations: 1_000,
             seed: 3,
         }
@@ -359,6 +382,45 @@ mod tests {
     }
 
     #[test]
+    fn the_best_plan_for_the_goal_stays_within_the_bomb_out_cap() {
+        let uncapped = tradeoff(&input(Some(560.0))).unwrap();
+        let riskiest_best = uncapped.points[uncapped.best_for_goal.unwrap()].bomb_out_probability;
+        let cap = riskiest_best / 2.0;
+        let result = tradeoff(&TradeoffInput {
+            bomb_out_cap: Some(cap),
+            ..input(Some(560.0))
+        })
+        .unwrap();
+        assert_eq!(result.points, uncapped.points);
+        let best = &result.points[result.best_for_goal.unwrap()];
+        assert!(best.bomb_out_probability <= cap);
+        for point in result
+            .points
+            .iter()
+            .filter(|p| p.bomb_out_probability <= cap)
+        {
+            assert!(point.goal_probability <= best.goal_probability);
+        }
+    }
+
+    #[test]
+    fn no_plan_within_the_bomb_out_cap_means_no_best_plan_for_the_goal() {
+        let mut input = input(Some(560.0));
+        for lift in crate::lift::Lift::ALL {
+            input.lifter.lifts.get_mut(lift).curve.technical_miss_chance = 0.3;
+        }
+        let safest = tradeoff(&input)
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| p.bomb_out_probability)
+            .fold(f64::INFINITY, f64::min);
+        assert!(safest > 0.0);
+        input.bomb_out_cap = Some(safest / 2.0);
+        assert_eq!(tradeoff(&input).unwrap().best_for_goal, None);
+    }
+
+    #[test]
     fn without_a_goal_there_is_no_best_plan_for_it() {
         let result = tradeoff(&input(None)).unwrap();
         assert_eq!(result.best_for_goal, None);
@@ -381,11 +443,13 @@ mod tests {
         let mut input = input(None);
         input.lifter.day_form.spread = -1.0;
         input.simulations = 0;
+        input.bomb_out_cap = Some(1.5);
         assert_eq!(
             tradeoff(&input).unwrap_err(),
             [
                 InputProblem::InvalidDayForm,
-                InputProblem::SimulationsOutOfRange
+                InputProblem::SimulationsOutOfRange,
+                InputProblem::InvalidBombOutCap
             ]
         );
     }

@@ -89,6 +89,17 @@ fn sweeps_the_plan_family_with_camel_case_fields() {
     assert!(json.contains(r#""bestForGoal":"#), "{json}");
 }
 
+#[wasm_bindgen_test]
+fn the_sweep_reads_the_bomb_out_cap() {
+    let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "bombOutCap": 3"#);
+    let response = tradeoff(Ts::<TradeoffRequest>::new_unchecked(
+        JSON::parse(&request).unwrap(),
+    ))
+    .unwrap();
+    let json: String = JSON::stringify(&response.js_value()).unwrap().into();
+    assert!(json.contains(r#""field":"bombOutCap""#), "{json}");
+}
+
 fn search_request(json: &str) -> Ts<SearchRequest> {
     Ts::new_unchecked(JSON::parse(json).unwrap())
 }
