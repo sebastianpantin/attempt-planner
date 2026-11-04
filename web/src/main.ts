@@ -3,12 +3,12 @@ import type {
   Evaluation,
   Lift,
   MaxEstimate,
+  Percentiles,
   Problem,
   TradeoffPoint,
   TradeoffRequest,
   TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
-import { type AttemptNode, attemptTree } from "./attempt-tree.ts";
 import { describePoint, drawTradeoff } from "./chart.ts";
 import type { Failed } from "./engine.ts";
 import {
@@ -40,7 +40,20 @@ import {
   parsePastMeets,
   today,
 } from "./past-meets.ts";
-import { resultsSummary } from "./results-summary.ts";
+import {
+  barFigures,
+  outcomeSentence,
+  rangeLayout,
+  ringFigure,
+  shortKg,
+  weight,
+} from "./outcome.ts";
+import {
+  bombOutCapLabel,
+  bombOutCapPercent,
+  ladder,
+  problemListId,
+} from "./plan-view.ts";
 import { startSearch } from "./search-runner.ts";
 import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
@@ -56,56 +69,85 @@ const LIFT_NAMES: Record<Lift, string> = {
   bench: "Bench press",
   deadlift: "Deadlift",
 };
-const HEADLINE_LABELS: Record<format.Headline, string> = {
-  total: "Average total, counting a bomb-out as 0",
-  goal: "Chance of reaching the goal",
-  bombOut: "Chance of bombing out",
-};
 const TYPING_PAUSE_MS = 250;
 const count = new Intl.NumberFormat("en");
+const CONTROL_NAMES = new Set<string>([
+  ...INPUT_NAMES,
+  "sex",
+  "precise",
+  "noBombOutCap",
+]);
 
 const byId = (id: string) => document.getElementById(id)!;
 const form = byId("plan") as HTMLFormElement;
 const summaryBar = byId("summary-bar");
-const input = (name: InputName | "precise") =>
+const input = (name: InputName | "precise" | "noBombOutCap") =>
   form.elements.namedItem(name) as HTMLInputElement;
 
-function liftFieldset(lift: Lift): string {
-  const name = LIFT_NAMES[lift];
-  const jump = (field: LiftField, label: string) =>
-    `+ <input name="${inputName(lift, field)}" type="number" min="0" step="2.5"
-         aria-label="${name} ${label} (kg)" /> kg`;
+/** A number input between −/+ buttons; the buttons stay out of the tab order as arrow keys step the input. */
+function stepper(lift: Lift, field: LiftField, label: string): string {
+  const repeat = field.endsWith("AfterMissKg")
+    ? '<span class="repeat" aria-hidden="true">repeat</span>'
+    : "";
   return `
-    <fieldset class="lift">
-      <legend><h3>${name}</h3></legend>
-      <label>Expected max (kg)
-        <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5" />
-      </label>
-      ${lift === LIFTS[0] ? '<button type="button" class="link" id="open-past-meets">Estimate maxes from past meets</button>' : ""}
-      <label>Opener (kg)
-        <input name="${inputName(lift, "openerKg")}" type="number" min="20" step="2.5" />
-      </label>
-      <table class="jumps">
-        <thead>
-          <tr><td></td><th scope="col">After a make</th><th scope="col">After a miss</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th scope="row">2nd attempt</th>
-            <td>${jump("secondAfterMakeKg", "2nd attempt jump after a make")}</td>
-            <td>${jump("secondAfterMissKg", "2nd attempt jump after a miss")}</td>
-          </tr>
-          <tr>
-            <th scope="row">3rd attempt</th>
-            <td>${jump("thirdAfterMakeKg", "3rd attempt jump after a make")}</td>
-            <td>${jump("thirdAfterMissKg", "3rd attempt jump after a miss")}</td>
-          </tr>
-        </tbody>
-      </table>
-      <ul class="tree" id="${lift}-tree" aria-label="${name} attempts"></ul>
-      <ul class="problems" id="${lift}-problems"></ul>
-    </fieldset>`;
+    <span class="stepper">
+      <button type="button" tabindex="-1" data-step="-1" aria-label="${label}: 2.5 kg less">−</button>
+      <span class="stepper-value">
+        <input name="${inputName(lift, field)}" type="number" min="${field === "openerKg" ? 20 : 0}"
+          step="2.5" aria-label="${label} (kg)" />${repeat}
+      </span>
+      <button type="button" tabindex="-1" data-step="1" aria-label="${label}: 2.5 kg more">+</button>
+    </span>`;
 }
+
+function attemptCard(lift: Lift, attempt: "2nd" | "3rd"): string {
+  const name = LIFT_NAMES[lift];
+  const jump = (outcome: "Make" | "Miss") =>
+    stepper(
+      lift,
+      `${attempt === "2nd" ? "second" : "third"}After${outcome}Kg`,
+      `${name} ${attempt} attempt jump after a ${outcome.toLowerCase()}`,
+    );
+  return `
+    <div class="attempt">
+      <p class="n">${attempt}</p>
+      <p class="kg"><span id="${lift}-${attempt}"></span> <small>kg if made</small></p>
+      <div class="jump"><span class="tag make" aria-hidden="true">✓ made</span>${jump("Make")}</div>
+      <div class="jump"><span class="tag miss" aria-hidden="true">✗ missed</span>${jump("Miss")}</div>
+    </div>`;
+}
+
+function liftCard(lift: Lift, index: number): string {
+  const name = LIFT_NAMES[lift];
+  return `
+    <details class="lift"${index === 0 ? " open" : ""}>
+      <summary>
+        <h3>${name}</h3>
+        <span class="lift-line" id="${lift}-line"></span>
+        <span class="pill" id="${lift}-make"></span>
+      </summary>
+      <div class="ladder">
+        <div class="attempt opener">
+          <p class="n">Opener</p>
+          ${stepper(lift, "openerKg", `${name} opener`)}
+          <p class="note" id="${lift}-share"></p>
+        </div>
+        ${attemptCard(lift, "2nd")}
+        ${attemptCard(lift, "3rd")}
+      </div>
+      <p class="path" id="${lift}-paths"></p>
+      <ul class="problems" id="${lift}-problems"></ul>
+    </details>`;
+}
+
+const maxField = (lift: Lift) => `
+  <label class="field">
+    <span>${LIFT_NAMES[lift]}<span class="visually-hidden"> expected max</span></span>
+    <span class="input big">
+      <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5" />
+      <span aria-hidden="true">kg</span>
+    </span>
+  </label>`;
 
 function curveRow(lift: Lift): string {
   const name = LIFT_NAMES[lift];
@@ -121,7 +163,8 @@ function curveRow(lift: Lift): string {
     </tr>`;
 }
 
-byId("lifts").innerHTML = LIFTS.map(liftFieldset).join("");
+byId("maxes").innerHTML = LIFTS.map(maxField).join("");
+byId("lifts").innerHTML = LIFTS.map(liftCard).join("");
 byId("curves").innerHTML = `
   <table>
     <thead><tr><td></td><th scope="col">Midpoint</th><th scope="col">Steepness</th>
@@ -131,10 +174,29 @@ byId("curves").innerHTML = `
 
 for (const name of INPUT_NAMES) input(name).valueAsNumber = EXAMPLE[name];
 
+const bombOutCapSlider = input("bombOutCapPercent");
+const noBombOutCap = input("noBombOutCap");
+
 const readValues = () =>
-  Object.fromEntries(
-    INPUT_NAMES.map((name) => [name, input(name).valueAsNumber]),
-  ) as FormValues;
+  ({
+    ...Object.fromEntries(
+      INPUT_NAMES.map((name) => [name, input(name).valueAsNumber]),
+    ),
+    bombOutCapPercent: bombOutCapPercent(
+      bombOutCapSlider.valueAsNumber,
+      noBombOutCap.checked,
+    ),
+  }) as FormValues;
+
+function showBombOutCap() {
+  bombOutCapSlider.disabled = noBombOutCap.checked;
+  const label = bombOutCapLabel(
+    bombOutCapSlider.valueAsNumber,
+    noBombOutCap.checked,
+  );
+  byId("bomb-out-cap-value").textContent = label;
+  bombOutCapSlider.setAttribute("aria-valuetext", label);
+}
 
 function listItem(text: string): HTMLLIElement {
   const item = document.createElement("li");
@@ -142,67 +204,37 @@ function listItem(text: string): HTMLLIElement {
   return item;
 }
 
-const OUTCOMES = {
-  afterMake: { mark: "✓ ", text: "after a make: " },
-  afterMiss: { mark: "✗ ", text: "after a miss: " },
-} as const;
-const BRANCHES = ["afterMake", "afterMiss"] as const;
-
-function span(text: string, seenOnly: boolean): HTMLSpanElement {
-  const element = document.createElement("span");
+function strong(text: string): HTMLElement {
+  const element = document.createElement("b");
   element.textContent = text;
-  if (seenOnly) element.ariaHidden = "true";
-  else element.className = "visually-hidden";
   return element;
 }
 
-/** The ✓ or ✗ on screen, read out as words. */
-const outcomeLabel = (outcome: keyof typeof OUTCOMES) => [
-  span(OUTCOMES[outcome].mark, true),
-  span(OUTCOMES[outcome].text, false),
-];
+const REPEAT_FIELDS = ["secondAfterMissKg", "thirdAfterMissKg"] as const;
 
-/** One line per 2nd attempt, with both of its 3rd attempts: "✓ 2nd 195.0 kg → ✓ 202.5 kg / ✗ 195.0 kg". */
-function secondAttemptItem(
-  node: AttemptNode,
-  outcome: keyof typeof OUTCOMES,
-): HTMLLIElement {
-  const item = document.createElement("li");
-  item.append(...outcomeLabel(outcome), `2nd ${format.kg(node.weightKg)}`);
-  const thirds = BRANCHES.flatMap((branch) => {
-    const third = node[branch];
-    return third ? [[branch, third] as const] : [];
-  });
-  for (const [index, [branch, third]] of thirds.entries()) {
-    const first = index === 0;
-    item.append(
-      span(first ? " → " : " / ", true),
-      span(first ? ", then 3rd " : " or ", false),
-      ...outcomeLabel(branch),
-      format.kg(third.weightKg),
-    );
-  }
-  return item;
-}
-
-function treeItem(node: AttemptNode): HTMLLIElement {
-  const item = listItem(`1st ${format.kg(node.weightKg)}`);
-  const seconds = BRANCHES.flatMap((branch) => {
-    const second = node[branch];
-    return second ? [secondAttemptItem(second, branch)] : [];
-  });
-  if (seconds.length > 0) {
-    const list = document.createElement("ul");
-    list.append(...seconds);
-    item.append(list);
-  }
-  return item;
-}
-
-function showTrees(request: EvaluateRequest) {
+function showPlans(values: FormValues) {
+  const { plans } = buildRequest(values, false);
   for (const lift of LIFTS) {
-    const tree = attemptTree(request.plans[lift]);
-    byId(`${lift}-tree`).replaceChildren(...(tree ? [treeItem(tree)] : []));
+    const view = ladder(plans[lift], values[inputName(lift, "expectedMaxKg")]);
+    const shown = (kg: number | undefined) =>
+      kg === undefined ? "–" : weight(kg);
+    byId(`${lift}-2nd`).textContent = shown(view.secondKg);
+    byId(`${lift}-3rd`).textContent = shown(view.thirdKg);
+    byId(`${lift}-share`).textContent = view.shareOfMax ?? "";
+    byId(`${lift}-line`).textContent = view.line ? `· ${view.line}` : "";
+    byId(`${lift}-paths`).replaceChildren(
+      ...view.paths.map(([label, weights]) => {
+        const item = document.createElement("span");
+        item.append(`${label}: `, strong(weights));
+        return item;
+      }),
+    );
+    for (const field of REPEAT_FIELDS) {
+      const jump = input(inputName(lift, field));
+      jump
+        .closest(".stepper")!
+        .toggleAttribute("data-repeat", jump.valueAsNumber === 0);
+    }
   }
 }
 
@@ -225,58 +257,54 @@ function markProblems(problems: Problem[]) {
         "aria-describedby",
         described ? `${described} ${item.id}` : item.id,
       );
-      const advanced = marked.closest("details");
-      if (advanced) advanced.open = true;
+      const collapsed = marked.closest("details");
+      if (collapsed) collapsed.open = true;
     }
-    byId(`${problem.lift ?? "meet"}-problems`).append(item);
+    byId(problemListId(problem)).append(item);
   }
 }
 
 function showEvaluation(
   evaluation: Evaluation | undefined,
-  simulations: number,
+  request: EvaluateRequest,
 ) {
   byId("evaluation").hidden = !evaluation;
+  byId("evaluation-details").hidden = !evaluation;
   updateSummaryBar();
+  for (const lift of LIFTS) {
+    byId(`${lift}-make`).textContent = evaluation
+      ? `${format.percent(evaluation.lifts[lift].makeProbability)} at least one make`
+      : "";
+  }
   if (!evaluation) return;
+  const { goalKg } = request;
+  const ring = ringFigure(evaluation, goalKg);
+  byId("ring").style.setProperty("--share", String(ring.share));
+  byId("ring-value").textContent = ring.value;
+  byId("ring-label").textContent = ring.label;
+  byId("outcome-sentence").replaceChildren(
+    ...outcomeSentence(evaluation, goalKg).map(({ text, strong: stressed }) =>
+      stressed ? strong(text) : text,
+    ),
+  );
+  byId("average-total").textContent = format.kg(evaluation.expectedTotalKg);
+  byId("bomb-out").textContent = format.percent(evaluation.bombOutProbability);
+  showRange(evaluation.totalPercentilesKg, goalKg);
   byId("summary-bar-figures").replaceChildren(
-    ...resultsSummary(evaluation).map((figure) => {
-      const span = document.createElement("span");
-      span.textContent = figure;
-      return span;
+    ...barFigures(evaluation, goalKg).map(([value, meaning]) => {
+      const figure = document.createElement("span");
+      figure.append(strong(value), ` ${meaning}`);
+      return figure;
     }),
   );
-  const { standardErrors: errors, totalPercentilesKg: totals } = evaluation;
-  const rows: [string, string][] = [
-    ...format
-      .headlines(evaluation)
-      .map(([headline, value]): [string, string] => [
-        HEADLINE_LABELS[headline],
-        value,
-      ]),
-    [
-      "Average total without a bomb-out",
-      evaluation.expectedTotalWithoutBombOutKg === undefined
-        ? "every meet bombed out"
-        : format.kg(evaluation.expectedTotalWithoutBombOutKg),
-    ],
-    [
-      "Total at the 10th, 50th and 90th percentile",
-      [totals.p10, totals.p50, totals.p90].map(format.kg).join(" / "),
-    ],
-  ];
-  byId("summary").replaceChildren(
-    ...rows.flatMap(([term, value]) => {
-      const dt = document.createElement("dt");
-      const dd = document.createElement("dd");
-      dt.textContent = term;
-      dd.textContent = value;
-      return [dt, dd];
-    }),
-  );
+  byId("without-bomb-out").textContent = `Average total without a bomb-out: ${
+    evaluation.expectedTotalWithoutBombOutKg === undefined
+      ? "every meet bombed out"
+      : format.kg(evaluation.expectedTotalWithoutBombOutKg)
+  }.`;
   byId("simulation-error").textContent = format.simulationError(
-    errors,
-    simulations,
+    evaluation.standardErrors,
+    request.simulations,
   );
   byId("lift-results").replaceChildren(
     ...LIFTS.map((lift) => {
@@ -299,6 +327,20 @@ function showEvaluation(
       return row;
     }),
   );
+}
+
+function showRange(totals: Percentiles, goalKg: number | undefined) {
+  const layout = rangeLayout(totals, goalKg);
+  const fill = byId("range-fill").style;
+  fill.left = `${layout.fromPercent}%`;
+  fill.right = `${100 - layout.toPercent}%`;
+  byId("range-median").style.left = `${layout.medianPercent}%`;
+  const goal = byId("range-goal");
+  goal.hidden = layout.goalPercent === undefined;
+  goal.style.left = `${layout.goalPercent ?? 0}%`;
+  byId("range-low").textContent = shortKg(totals.p10);
+  byId("range-median-label").textContent = `median ${weight(totals.p50)}`;
+  byId("range-high").textContent = shortKg(totals.p90);
 }
 
 const status = (id: string, text: string) => {
@@ -407,7 +449,7 @@ const submitEvaluation = simulationWorker("evaluate", {
     problems.evaluation = reply.kind === "invalid" ? reply.problems : [];
     showProblems();
     shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
-    showEvaluation(shownEvaluation, request.simulations);
+    showEvaluation(shownEvaluation, request);
     showTradeoff();
     report(
       "status",
@@ -457,7 +499,8 @@ function simulate(values: FormValues) {
 let typingPause: ReturnType<typeof setTimeout> | undefined;
 function update() {
   const values = readValues();
-  showTrees(buildRequest(values, false));
+  showBombOutCap();
+  showPlans(values);
   byId("results").setAttribute("aria-busy", "true");
   status("status", "Updating…");
   clearTimeout(typingPause);
@@ -465,19 +508,20 @@ function update() {
 }
 
 const findButton = byId("find-plan") as HTMLButtonElement;
+const barFindButton = byId("bar-find-plan") as HTMLButtonElement;
 const cancelButton = byId("cancel-search") as HTMLButtonElement;
 let stopSearch: (() => void) | undefined;
 
 function searchEnded(message: string) {
   stopSearch = undefined;
-  findButton.disabled = false;
+  findButton.disabled = barFindButton.disabled = false;
   if (document.activeElement === cancelButton) findButton.focus();
   cancelButton.hidden = true;
   status("search-status", message);
 }
 
 findButton.addEventListener("click", () => {
-  findButton.disabled = true;
+  findButton.disabled = barFindButton.disabled = true;
   cancelButton.hidden = false;
   cancelButton.focus();
   status("search-status", "Searching…");
@@ -498,16 +542,43 @@ cancelButton.addEventListener("click", () => {
   stopSearch?.();
   searchEnded("Search cancelled. The plan is unchanged.");
 });
+barFindButton.addEventListener("click", () => findButton.click());
 
-const sexSelect = form.elements.namedItem("sex") as HTMLSelectElement;
-const sex = () => sexSelect.value as Sex;
+const compareButton = byId("compare-plans");
+compareButton.addEventListener("click", () => {
+  const tradeoff = byId("tradeoff");
+  tradeoff.hidden = !tradeoff.hidden;
+  compareButton.setAttribute("aria-expanded", String(!tradeoff.hidden));
+  if (!tradeoff.hidden) tradeoff.scrollIntoView({ block: "start" });
+});
+
+form.addEventListener("click", (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>(
+    "button[data-step]",
+  );
+  if (!button) return;
+  const field = button.parentElement!.querySelector("input")!;
+  if (button.dataset.step === "1") field.stepUp();
+  else field.stepDown();
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
+/** Opening one lift closes the others, keeping the one being edited in view. */
+byId("lifts").addEventListener("click", (event) => {
+  const summary = (event.target as Element).closest("summary");
+  const opened = summary?.parentElement as HTMLDetailsElement | undefined;
+  if (!summary || !opened || opened.open) return;
+  for (const lift of byId("lifts").querySelectorAll("details")) {
+    if (lift !== opened) lift.open = false;
+  }
+  summary.scrollIntoView({ block: "nearest" });
+});
+
+const sex = () =>
+  (form.elements.namedItem("sex") as RadioNodeList).value as Sex;
 let calibratedSex: Sex = "any";
 
 const pastMeets = byId("past-meets") as HTMLTextAreaElement;
-byId("open-past-meets").addEventListener("click", () => {
-  (byId("past-meets-panel") as HTMLDetailsElement).open = true;
-  pastMeets.focus();
-});
 const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
 const useEstimateButton = byId("use-estimate") as HTMLButtonElement;
 let estimatedValues: [InputName, number][] = [];
@@ -583,8 +654,9 @@ useEstimateButton.addEventListener("click", () => {
 });
 
 form.addEventListener("input", (event) => {
-  if (event.target === pastMeets) return;
-  if (event.target === sexSelect) {
+  const { name } = event.target as HTMLInputElement;
+  if (!CONTROL_NAMES.has(name)) return;
+  if (name === "sex") {
     const { changes, kept } = switchCalibration(
       readValues(),
       calibratedSex,
@@ -603,5 +675,6 @@ form.addEventListener("input", (event) => {
 form.addEventListener("submit", (event) => event.preventDefault());
 
 const initial = readValues();
-showTrees(buildRequest(initial, false));
+showBombOutCap();
+showPlans(initial);
 simulate(initial);
