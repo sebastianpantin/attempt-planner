@@ -24,7 +24,7 @@ export const describePoint = (point: TradeoffPoint) =>
   [
     shapeLabel(point.shape),
     `bomb-out ${format.percent(point.bombOutProbability)}`,
-    `expected total ${format.kg(point.expectedTotalKg)}`,
+    `average total ${format.kg(point.expectedTotalKg)}`,
     ...(point.goalProbability === undefined
       ? []
       : [`goal ${format.percent(point.goalProbability)}`]),
@@ -83,7 +83,7 @@ export function drawTradeoff(
       `translate(14,${(MARGIN.top + HEIGHT - MARGIN.bottom) / 2}) rotate(-90)`,
     )
     .attr("text-anchor", "middle")
-    .text("Expected total");
+    .text("Average total");
 
   root
     .append("g")

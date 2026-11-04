@@ -79,7 +79,7 @@
                   <tr>
                     <th scope="col">Lift</th>
                     <th scope="col">At least one make</th>
-                    <th scope="col">Expected best</th>
+                    <th scope="col">Median best</th>
                   </tr>
                 </thead>
                 <tbody id="lift-results"></tbody>
@@ -93,7 +93,7 @@
               Each dot is a plan from one family: the opener, the 2nd attempt
               after a make and the 3rd attempt after a make, each a percentage
               of every lift's expected max, repeating the weight after a miss.
-              The line joins the plans with the highest expected total at each
+              The line joins the plans with the highest average total at each
               risk of bombing out.
             </p>
             <p id="tradeoff-status" role="status"></p>
@@ -101,7 +101,7 @@
               <svg
                 id="tradeoff-chart"
                 role="img"
-                aria-label="Expected total against the chance of bombing out for every plan in the family. The table below lists the best plans."
+                aria-label="Average total against the chance of bombing out for every plan in the family. The table below lists the best plans."
               ></svg>
               <ul class="chart-key">
                 <li>
@@ -122,7 +122,7 @@
                   <tr>
                     <th scope="col">Opener / 2nd / 3rd</th>
                     <th scope="col">Bomb-out</th>
-                    <th scope="col">Expected total</th>
+                    <th scope="col">Average total</th>
                     <th scope="col">Goal</th>
                     <td></td>
                   </tr>

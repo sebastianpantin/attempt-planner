@@ -179,7 +179,7 @@ function showEvaluation(evaluation: Evaluation | undefined) {
         ];
   const rows: [string, string][] = [
     [
-      "Expected total, counting a bomb-out as 0",
+      "Average total, counting a bomb-out as 0",
       format.kgWithError(evaluation.expectedTotalKg, errors.expectedTotalKg),
     ],
     ...goalRows,
@@ -191,7 +191,7 @@ function showEvaluation(evaluation: Evaluation | undefined) {
       ),
     ],
     [
-      "Expected total without a bomb-out",
+      "Average total without a bomb-out",
       evaluation.expectedTotalWithoutBombOutKg === undefined
         ? "every meet bombed out"
         : format.kg(evaluation.expectedTotalWithoutBombOutKg),
@@ -212,7 +212,7 @@ function showEvaluation(evaluation: Evaluation | undefined) {
   );
   byId("lift-results").replaceChildren(
     ...LIFTS.map((lift) => {
-      const { makeProbability, expectedBestKg } = evaluation.lifts[lift];
+      const { makeProbability, medianBestKg } = evaluation.lifts[lift];
       const row = document.createElement("tr");
       const heading = document.createElement("th");
       heading.scope = "row";
@@ -220,7 +220,7 @@ function showEvaluation(evaluation: Evaluation | undefined) {
       row.append(heading);
       row.insertCell().textContent = format.percent(makeProbability);
       row.insertCell().textContent =
-        expectedBestKg === undefined ? "–" : format.kg(expectedBestKg);
+        medianBestKg === undefined ? "–" : format.kg(medianBestKg);
       return row;
     }),
   );
@@ -242,8 +242,8 @@ function usePlan(point: TradeoffPoint) {
 
 function showTradeoff() {
   const view = byId("tradeoff-view");
-  view.hidden = !shownTradeoff;
-  if (!shownTradeoff) return;
+  view.hidden = !shownTradeoff?.points.length;
+  if (!shownTradeoff?.points.length) return;
   const { points, bestForGoal } = shownTradeoff;
   drawTradeoff(
     byId("tradeoff-chart") as unknown as SVGSVGElement,
