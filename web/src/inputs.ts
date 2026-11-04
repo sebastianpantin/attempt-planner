@@ -5,6 +5,7 @@ import type {
   LiftPlanKg,
   PerLift,
   Problem,
+  SearchRequest,
   TradeoffRequest,
 } from "../pkg/attempt_sim_wasm.js";
 
@@ -25,7 +26,12 @@ const LIFT_FIELDS = [
   "steepness",
 ] as const;
 
-const MEET_FIELDS = ["goalKg", "spreadPercent", "correlation"] as const;
+const MEET_FIELDS = [
+  "goalKg",
+  "spreadPercent",
+  "correlation",
+  "bombOutCapPercent",
+] as const;
 
 export type LiftField = (typeof LIFT_FIELDS)[number];
 export type MeetField = (typeof MEET_FIELDS)[number];
@@ -95,6 +101,24 @@ export function buildRequest(
   };
 }
 
+/** The lifter, goal and current plans for a search, with the bomb-out cap in percent. */
+export function buildSearchRequest(values: FormValues): SearchRequest {
+  const { lifter, plans, goalKg, simulations, seed } = buildRequest(
+    values,
+    false,
+  );
+  return {
+    lifter,
+    plans,
+    ...(goalKg === undefined ? {} : { goalKg }),
+    ...(Number.isNaN(values.bombOutCapPercent)
+      ? {}
+      : { bombOutCap: values.bombOutCapPercent / 100 }),
+    simulations,
+    seed,
+  };
+}
+
 /** The plan inputs, with their values, that make `buildRequest` carry these plans. */
 export function planValues(plans: PerLift<LiftPlanKg>): [InputName, number][] {
   return LIFTS.flatMap((lift) => {
@@ -121,6 +145,7 @@ const PROBLEM_LIFT_FIELDS: Partial<Record<InputField, LiftField[]>> = {
 const PROBLEM_MEET_FIELDS: Partial<Record<InputField, MeetField[]>> = {
   goal: ["goalKg"],
   dayForm: ["spreadPercent", "correlation"],
+  bombOutCap: ["bombOutCapPercent"],
 };
 
 /** The inputs to mark for a problem the engine found. */
@@ -140,6 +165,7 @@ const FIELD_LABELS: Record<InputField, string> = {
   dayForm: "Day form",
   simulations: "Simulations",
   goal: "Goal",
+  bombOutCap: "Bomb-out cap",
 };
 
 export const describeProblem = ({ field, message }: Problem) =>
