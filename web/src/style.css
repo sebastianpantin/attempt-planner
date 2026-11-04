@@ -755,11 +755,10 @@ caption {
   opacity: 0.5;
 }
 
-.with-term {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
+/* Text and its "?" flow as one line of text, so the "?" stays after the last word. */
+.with-term > :not(.term) {
+  display: inline;
+  margin: 0;
 }
 
 .term {
@@ -768,6 +767,8 @@ caption {
 
 .term summary {
   display: inline-grid;
+  vertical-align: middle;
+  margin-left: 4px;
   place-items: center;
   width: 24px;
   height: 24px;
@@ -779,8 +780,7 @@ caption {
 }
 
 .term p {
-  flex-basis: 100%;
-  margin: 0;
+  margin: 4px 0 0;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--accent-soft);
@@ -1158,7 +1158,7 @@ dialog form {
   .term summary {
     width: 44px;
     height: 44px;
-    margin: -10px;
+    margin: -10px -10px -10px -6px;
     border: 10px solid transparent;
     background-clip: padding-box;
   }

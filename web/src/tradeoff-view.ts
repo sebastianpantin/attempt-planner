@@ -37,7 +37,11 @@ export function highlightedPoints(
 }
 
 /** The bomb-out bands the comparison table picks a plan from, by their upper ends. */
-export const RISK_LEVELS = [0.005, 0.01, 0.02, 0.05, 0.1];
+export const RISK_LEVELS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+
+/** The riskiest band always shown; riskier ones only fill a table with fewer rows. */
+const USUAL_RISK = 0.1;
+const FEWEST_ROWS = 3;
 
 export interface ComparisonRow {
   point: TradeoffPoint;
@@ -51,17 +55,26 @@ const better = (a: TradeoffPoint, b: TradeoffPoint) =>
   (a.goalProbability ?? 0) - (b.goalProbability ?? 0) ||
   a.expectedTotalKg - b.expectedTotalKg;
 
+function bandLabel(below: number | undefined, level: number) {
+  if (below === undefined) return `Up to ${finePercent(level)} bomb-out`;
+  if (level === 1) return `Over ${finePercent(below)} bomb-out`;
+  return `${finePercent(below)} to ${finePercent(level)} bomb-out`;
+}
+
 /**
  * Plans that span the risk levels, from safest to riskiest: the best plan in each band of
- * bomb-out chance up to the last of `RISK_LEVELS` (by goal chance when there is a goal, else
- * by average total), and the best plan for the goal, marked.
+ * bomb-out chance up to 10%, and in riskier bands while fewer than `FEWEST_ROWS` are picked
+ * (by goal chance when there is a goal, else by average total), and the best plan for the
+ * goal, marked.
  */
 export function comparisonRows(
   points: TradeoffPoint[],
   bestForGoal: number | undefined,
 ): ComparisonRow[] {
   const best = bestForGoal === undefined ? undefined : points[bestForGoal];
-  const rows = RISK_LEVELS.flatMap((level, index): ComparisonRow[] => {
+  const rows: ComparisonRow[] = [];
+  RISK_LEVELS.forEach((level, index) => {
+    if (level > USUAL_RISK && rows.length >= FEWEST_ROWS) return;
     const below = RISK_LEVELS[index - 1];
     const inBand = points.filter(
       (point) =>
@@ -72,11 +85,13 @@ export function comparisonRows(
       (top, point) => (!top || better(point, top) > 0 ? point : top),
       undefined,
     );
-    const label =
-      below === undefined
-        ? `Up to ${finePercent(level)} bomb-out`
-        : `${finePercent(below)} to ${finePercent(level)} bomb-out`;
-    return pick ? [{ point: pick, label, bestForGoal: pick === best }] : [];
+    if (pick) {
+      rows.push({
+        point: pick,
+        label: bandLabel(below, level),
+        bestForGoal: pick === best,
+      });
+    }
   });
   if (best && !rows.some((row) => row.point === best)) {
     rows.push({ point: best, label: "Best for the goal", bestForGoal: true });

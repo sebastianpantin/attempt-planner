@@ -109,6 +109,3 @@ export const bombOutCapPercent = (position: number, anyRisk: boolean) =>
 
 export const bombOutCapLabel = (position: number, anyRisk: boolean) =>
   anyRisk ? "Any risk" : `${weight(capAt(position))}%`;
-
-/** The cap a first meet asks for: hardly ever bombing out. */
-export const FIRST_MEET_CAP_PERCENT = 1;

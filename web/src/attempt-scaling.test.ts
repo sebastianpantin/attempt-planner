@@ -3,11 +3,13 @@ import {
   aboveMaxWarnings,
   attemptsAboveMax,
   defaultShape,
+  defaultShapes,
   isPlanField,
+  regroupedShapes,
   scaledPlan,
   shapeOf,
 } from "./attempt-scaling.ts";
-import { EXAMPLE } from "./example.ts";
+import { CALIBRATIONS, EXAMPLE } from "./example.ts";
 
 const plan = {
   openerKg: 182.5,
@@ -75,6 +77,29 @@ describe("shapeOf and scaledPlan", () => {
         ["squat-thirdAfterMissKg", 0],
       ]),
     );
+  });
+});
+
+describe("default shapes", () => {
+  const { any, women } = CALIBRATIONS;
+
+  it("start each lift at its group's typical opener", () => {
+    const shapes = defaultShapes(women.typicalOpener);
+    expect(shapes.squat).toEqual(defaultShape(0.88));
+    expect(shapes.deadlift).toEqual(defaultShape(0.87));
+  });
+
+  it("follow a group change only where the shape is still the old group's default", () => {
+    const shapes = {
+      ...defaultShapes(any.typicalOpener),
+      bench: shapeOf(EXAMPLE, "bench")!,
+    };
+    expect(
+      regroupedShapes(shapes, any.typicalOpener, women.typicalOpener),
+    ).toEqual([
+      ["squat", defaultShape(0.88)],
+      ["deadlift", defaultShape(0.87)],
+    ]);
   });
 });
 

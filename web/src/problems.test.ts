@@ -4,6 +4,8 @@ import { EXAMPLE } from "./example.ts";
 import {
   describeProblem,
   inputsFor,
+  FIRST_MEET_CAP_PERCENT,
+  firstMeetPrompt,
   maxesPrompt,
   problemListId,
   shownProblems,
@@ -126,6 +128,19 @@ describe("waiting for the maxes", () => {
     );
     expect(maxesPrompt({ ...noBench, "squat-expectedMaxKg": Number.NaN })).toBe(
       "Enter your squat and bench press maxes to see results.",
+    );
+  });
+
+  it("names the action the maxes are wanted for", () => {
+    expect(maxesPrompt(noBench, "plan your attempts")).toBe(
+      "Enter your bench press max to plan your attempts.",
+    );
+  });
+
+  it("tells a first-timer the limit is set and which maxes the search waits for", () => {
+    expect(firstMeetPrompt(EXAMPLE)).toBe("");
+    expect(firstMeetPrompt(noBench)).toBe(
+      `Bomb-out limit set to ${FIRST_MEET_CAP_PERCENT}%. Enter your bench press max to plan your attempts.`,
     );
   });
 

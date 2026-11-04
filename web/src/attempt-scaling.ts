@@ -1,5 +1,4 @@
-import type { Lift, LiftPlanKg } from "../pkg/attempt_sim_wasm.js";
-import { attemptTree } from "./attempt-tree.ts";
+import type { Lift, LiftPlanKg, PerLift } from "../pkg/attempt_sim_wasm.js";
 import * as format from "./format.ts";
 import {
   type FormValues,
@@ -8,6 +7,7 @@ import {
   isRepeatJump,
   JUMP_FIELDS,
   type LiftField,
+  LIFTS,
 } from "./inputs.ts";
 
 const BAR_KG = 20;
@@ -37,6 +37,30 @@ export const defaultShape = (typicalOpener: number): PlanShape => ({
   thirdAfterMakeKg: 0.04,
   thirdAfterMissKg: 0,
 });
+
+/** Each lift's default plan for a group's typical openers. */
+export const defaultShapes = (
+  typicalOpener: PerLift<number>,
+): Record<Lift, PlanShape> =>
+  Object.fromEntries(
+    LIFTS.map((lift) => [lift, defaultShape(typicalOpener[lift])]),
+  ) as Record<Lift, PlanShape>;
+
+const sameShape = (a: PlanShape, b: PlanShape) =>
+  PLAN_FIELDS.every((field) => a[field] === b[field]);
+
+/** The lifts whose shape is still the default for openers `from`, with the default for `to`. */
+export function regroupedShapes(
+  shapes: Record<Lift, PlanShape>,
+  from: PerLift<number>,
+  to: PerLift<number>,
+): [Lift, PlanShape][] {
+  const before = defaultShapes(from);
+  const after = defaultShapes(to);
+  return LIFTS.filter((lift) => sameShape(shapes[lift], before[lift])).map(
+    (lift) => [lift, after[lift]],
+  );
+}
 
 /** The lift's plan as shares of its max, or `undefined` while the max or a weight is missing. */
 export function shapeOf(values: FormValues, lift: Lift): PlanShape | undefined {
@@ -71,29 +95,26 @@ export function scaledPlan(
   ]);
 }
 
-const ATTEMPT_NAMES = ["Opener", "2nd attempt", "3rd attempt"] as const;
+type AttemptName = "Opener" | "2nd attempt" | "3rd attempt";
 
 /** Each attempt whose heaviest planned weight is above the expected max, with that weight. */
 export function attemptsAboveMax(
-  plan: LiftPlanKg,
+  { openerKg, second, third }: LiftPlanKg,
   maxKg: number,
-): { attempt: (typeof ATTEMPT_NAMES)[number]; kg: number }[] {
-  const tree = attemptTree(plan);
-  if (!tree || !isUsableMax(maxKg)) return [];
-  const seconds = [tree.afterMake!, tree.afterMiss!];
-  const heaviest = [
-    tree.weightKg,
-    Math.max(...seconds.map((node) => node.weightKg)),
-    Math.max(
-      ...seconds.flatMap((node) => [
-        node.afterMake!.weightKg,
-        node.afterMiss!.weightKg,
-      ]),
-    ),
+): { attempt: AttemptName; kg: number }[] {
+  const secondKg = openerKg + Math.max(second.afterMakeKg, second.afterMissKg);
+  const heaviest: { attempt: AttemptName; kg: number }[] = [
+    { attempt: "Opener", kg: openerKg },
+    { attempt: "2nd attempt", kg: secondKg },
+    {
+      attempt: "3rd attempt",
+      kg: secondKg + Math.max(third.afterMakeKg, third.afterMissKg),
+    },
   ];
-  return heaviest.flatMap((kg, index) =>
-    kg > maxKg ? [{ attempt: ATTEMPT_NAMES[index]!, kg }] : [],
-  );
+  if (!isUsableMax(maxKg) || !heaviest.every(({ kg }) => Number.isFinite(kg))) {
+    return [];
+  }
+  return heaviest.filter(({ kg }) => kg > maxKg);
 }
 
 /** Warnings for attempts above the expected max; an opener above it is missed more often than made. */

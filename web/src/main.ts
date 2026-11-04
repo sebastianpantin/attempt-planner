@@ -12,11 +12,11 @@ import type {
 } from "../pkg/attempt_sim_wasm.js";
 import {
   aboveMaxWarnings,
-  defaultShape,
+  defaultShapes,
   isPlanField,
   isUsableMax,
   PLAN_FIELDS,
-  type PlanShape,
+  regroupedShapes,
   scaledPlan,
   shapeOf,
 } from "./attempt-scaling.ts";
@@ -27,6 +27,7 @@ import {
   CALIBRATIONS,
   describeKept,
   EXAMPLE,
+  EXAMPLE_LIFTER_NAMES,
   type Sex,
   START,
   switchCalibration,
@@ -43,6 +44,7 @@ import {
   inputName,
   type LiftField,
   LIFTS,
+  parseInputName,
   planValues,
   sweepOnlyProblems,
 } from "./inputs.ts";
@@ -68,7 +70,6 @@ import {
   BOMB_OUT_CAPS,
   bombOutCapLabel,
   bombOutCapPercent,
-  FIRST_MEET_CAP_PERCENT,
   jumpLabels,
   ladder,
   sliderPosition,
@@ -76,6 +77,8 @@ import {
 } from "./plan-view.ts";
 import {
   describeProblem,
+  FIRST_MEET_CAP_PERCENT,
+  firstMeetPrompt,
   inputsFor,
   maxesPrompt,
   problemListId,
@@ -192,7 +195,7 @@ const maxField = (lift: Lift) => `
       <span>${LIFT_NAMES[lift].full}<span class="visually-hidden"> expected max</span></span>
       <span class="input big">
         <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5"
-          aria-describedby="maxes-hint" />
+          aria-describedby="maxes-hint" data-describedby="maxes-hint" />
         <span aria-hidden="true">kg</span>
       </span>
     </label>
@@ -303,29 +306,34 @@ function showPlans(values: FormValues) {
   }
 }
 
+const setOrRemove = (target: Element, name: string, value: string) =>
+  value ? target.setAttribute(name, value) : target.removeAttribute(name);
+
+/** Marks the inputs with problems, each described by its own hint (`data-describedby`) and its problems. */
 function markProblems(problems: Problem[], values: FormValues) {
-  for (const name of INPUT_NAMES) {
-    input(name).removeAttribute("aria-invalid");
-    input(name).removeAttribute("aria-describedby");
-  }
   for (const list of form.querySelectorAll("ul.problems")) {
     list.replaceChildren();
   }
+  const problemIds = new Map<InputName, string[]>();
   for (const [index, problem] of problems.entries()) {
     const item = element("li", "", describeProblem(problem));
     item.id = `problem-${index}`;
     for (const name of inputsFor(problem, values)) {
-      const marked = input(name);
-      marked.setAttribute("aria-invalid", "true");
-      const described = marked.getAttribute("aria-describedby");
-      marked.setAttribute(
-        "aria-describedby",
-        described ? `${described} ${item.id}` : item.id,
-      );
-      const collapsed = marked.closest("details");
+      problemIds.set(name, [...(problemIds.get(name) ?? []), item.id]);
+      const collapsed = input(name).closest("details");
       if (collapsed) collapsed.open = true;
     }
     byId(problemListId(problem)).append(item);
+  }
+  for (const name of INPUT_NAMES) {
+    const marked = input(name);
+    const ids = problemIds.get(name) ?? [];
+    setOrRemove(marked, "aria-invalid", ids.length > 0 ? "true" : "");
+    setOrRemove(
+      marked,
+      "aria-describedby",
+      [marked.dataset["describedby"] ?? [], ids].flat().join(" "),
+    );
   }
 }
 
@@ -416,8 +424,10 @@ const status = (id: string, text: string) => {
   byId(id).textContent = text;
 };
 
-/** The evaluation shown, with the goal it was simulated for. */
-let shown: { evaluation: Evaluation; goalKg?: number } | undefined;
+/** The evaluation shown, with the goal and plans it was simulated for. */
+let shown:
+  | (Pick<EvaluateRequest, "goalKg" | "plans"> & { evaluation: Evaluation })
+  | undefined;
 /** Single changes to the plans shown, cleared while newer plans are being simulated. */
 let shownChanges: Extract<ChangesResponse, { kind: "changed" }> | undefined;
 
@@ -461,13 +471,12 @@ let shownTradeoff:
     }
   | undefined;
 
+const sex = () =>
+  (form.elements.namedItem("sex") as RadioNodeList).value as Sex;
+let calibratedSex: Sex = "any";
+
 /** Each lift's plan as shares of its max, which the attempts follow when the max changes. */
-const shapes = Object.fromEntries(
-  LIFTS.map((lift) => [
-    lift,
-    defaultShape(CALIBRATIONS.any.typicalOpener[lift]),
-  ]),
-) as Record<Lift, PlanShape>;
+const shapes = defaultShapes(CALIBRATIONS[calibratedSex].typicalOpener);
 /** Lifts whose attempts were edited by hand since they last followed the max. */
 const handEdited = new Set<Lift>();
 
@@ -588,12 +597,15 @@ const submitEvaluation = simulationWorker("evaluate", {
     showProblems();
     shown =
       reply.kind === "evaluated"
-        ? { evaluation: reply.evaluation, goalKg: request.goalKg }
+        ? {
+            evaluation: reply.evaluation,
+            goalKg: request.goalKg,
+            plans: request.plans,
+          }
         : undefined;
     showEvaluation(shown?.evaluation, request);
     showAnalytics();
     showTradeoff();
-    byId("search").hidden = maxesPrompt(simulatedValues) !== "";
     report(
       "status",
       reply,
@@ -641,6 +653,7 @@ function simulate(values: FormValues) {
   simulatedValues = values;
   submitEvaluation(buildRequest(values, input("precise").checked));
   shownChanges = undefined;
+  showAnalytics();
   submitChanges(buildSearchRequest(values));
   const sweep = buildTradeoffRequest(values);
   const key = JSON.stringify(sweep);
@@ -651,11 +664,17 @@ function simulate(values: FormValues) {
   }
 }
 
+/** The search waits for every max, so it shows as soon as they are in. */
+const showSearchArea = (values: FormValues) => {
+  byId("search").hidden = maxesPrompt(values) !== "";
+};
+
 let typingPause: ReturnType<typeof setTimeout> | undefined;
 function update() {
   const values = readValues();
   showBombOutCap();
   showPlans(values);
+  showSearchArea(values);
   byId("results").setAttribute("aria-busy", "true");
   status("status", "Updating…");
   clearTimeout(typingPause);
@@ -730,27 +749,13 @@ firstMeetButton.addEventListener("click", () => {
   noBombOutCap.checked = false;
   setInput("bombOutCapPercent", FIRST_MEET_CAP_PERCENT);
   update();
-  const missing = maxesPrompt(readValues());
-  status(
-    "first-meet-status",
-    missing
-      ? `Bomb-out limit set to ${FIRST_MEET_CAP_PERCENT}%. ${missing.replace("see results", "plan your attempts")}`
-      : "",
-  );
-  if (!missing) search(cancelButton);
+  const prompt = firstMeetPrompt(readValues());
+  status("first-meet-status", prompt);
+  if (!prompt) search(cancelButton);
 });
 
 byId("try-example").addEventListener("click", () => {
-  const lifterNames = [
-    ...LIFTS.flatMap((lift) =>
-      (["expectedMaxKg", ...PLAN_FIELDS] as const).map((field) =>
-        inputName(lift, field),
-      ),
-    ),
-    "goalKg",
-    "bombOutCapPercent",
-  ] as const;
-  for (const name of lifterNames) setInput(name, EXAMPLE[name]);
+  for (const name of EXAMPLE_LIFTER_NAMES) setInput(name, EXAMPLE[name]);
   noBombOutCap.checked = false;
   rememberShapes();
   status(
@@ -796,10 +801,6 @@ byId("lifts").addEventListener("click", (event) => {
   }
   summary.scrollIntoView({ block: "nearest" });
 });
-
-const sex = () =>
-  (form.elements.namedItem("sex") as RadioNodeList).value as Sex;
-let calibratedSex: Sex = "any";
 
 const pastMeets = byId("past-meets") as HTMLTextAreaElement;
 const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
@@ -879,15 +880,24 @@ form.addEventListener("input", (event) => {
   if (!CONTROL_NAMES.has(name)) return;
   status("example-status", "");
   status("first-meet-status", "");
-  const [lift, field = ""] = name.split("-") as [Lift, string?];
-  if (isPlanField(field)) handEdited.add(lift);
-  if (field === "expectedMaxKg") followMax(lift);
+  const liftInput = parseInputName(name);
+  if (liftInput && isPlanField(liftInput.field)) handEdited.add(liftInput.lift);
+  if (liftInput?.field === "expectedMaxKg") followMax(liftInput.lift);
   if (name === "sex") {
     const { changes, kept } = switchCalibration(
       readValues(),
       calibratedSex,
       sex(),
     );
+    for (const [lift, shape] of regroupedShapes(
+      shapes,
+      CALIBRATIONS[calibratedSex].typicalOpener,
+      CALIBRATIONS[sex()].typicalOpener,
+    )) {
+      if (handEdited.has(lift)) continue;
+      shapes[lift] = shape;
+      followMax(lift);
+    }
     calibratedSex = sex();
     for (const [name, value] of changes) setInput(name, value);
     status("sex-status", describeKept(kept));
@@ -903,4 +913,5 @@ form.addEventListener("submit", (event) => event.preventDefault());
 const initial = readValues();
 showBombOutCap();
 showPlans(initial);
+showSearchArea(initial);
 simulate(initial);

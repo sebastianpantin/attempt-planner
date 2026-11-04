@@ -56,6 +56,15 @@ export type FormValues = Record<InputName, number>;
 export const inputName = (lift: Lift, field: LiftField): InputName =>
   `${lift}-${field}`;
 
+const LIFT_INPUTS = new Map<string, { lift: Lift; field: LiftField }>(
+  LIFTS.flatMap((lift) =>
+    LIFT_FIELDS.map((field) => [inputName(lift, field), { lift, field }]),
+  ),
+);
+
+/** The lift and field of a lift input's name, or `undefined` for any other name. */
+export const parseInputName = (name: string) => LIFT_INPUTS.get(name);
+
 export const INPUT_NAMES: InputName[] = [
   ...LIFTS.flatMap((lift) =>
     LIFT_FIELDS.map((field) => inputName(lift, field)),

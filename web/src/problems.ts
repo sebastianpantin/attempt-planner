@@ -130,10 +130,24 @@ export function shownProblems(
   );
 }
 
-/** Asks for the maxes still empty, or nothing once all are in. */
-export function maxesPrompt(values: FormValues): string {
+/** Asks for the maxes still empty to `action`, or nothing once all are in. */
+export function maxesPrompt(
+  values: FormValues,
+  action = "see results",
+): string {
   const missing = liftsWithoutMax(values);
   if (missing.length === 0) return "";
   const names = missing.map((lift) => LIFT_NAMES[lift].full.toLowerCase());
-  return `Enter your ${listOf(names)} ${missing.length === 1 ? "max" : "maxes"} to see results.`;
+  return `Enter your ${listOf(names)} ${missing.length === 1 ? "max" : "maxes"} to ${action}.`;
+}
+
+/** The cap a first meet asks for: hardly ever bombing out. */
+export const FIRST_MEET_CAP_PERCENT = 1;
+
+/** Tells a first-timer the limit is set while the search waits for maxes, or nothing once all are in. */
+export function firstMeetPrompt(values: FormValues): string {
+  const missing = maxesPrompt(values, "plan your attempts");
+  return missing
+    ? `Bomb-out limit set to ${FIRST_MEET_CAP_PERCENT}%. ${missing}`
+    : "";
 }

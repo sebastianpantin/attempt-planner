@@ -1,4 +1,5 @@
 import type { PerLift } from "../pkg/attempt_sim_wasm.js";
+import { PLAN_FIELDS } from "./attempt-scaling.ts";
 import { listOf } from "./format.ts";
 import {
   type FormValues,
@@ -136,6 +137,17 @@ export const EXAMPLE: FormValues = {
   bombOutCapPercent: 5,
   ...Object.fromEntries(calibrationValues("any")),
 } as FormValues;
+
+/** The lifter's own inputs the example fills in, leaving the model alone. */
+export const EXAMPLE_LIFTER_NAMES: InputName[] = [
+  ...LIFTS.flatMap((lift) =>
+    (["expectedMaxKg", ...PLAN_FIELDS] as const).map((field) =>
+      inputName(lift, field),
+    ),
+  ),
+  "goalKg",
+  "bombOutCapPercent",
+];
 
 /** The page's first values: the model and a 5% bomb-out limit, with the lifter's own numbers empty. */
 export const START: FormValues = {

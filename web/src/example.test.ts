@@ -4,6 +4,7 @@ import {
   calibrationValues,
   describeKept,
   EXAMPLE,
+  EXAMPLE_LIFTER_NAMES,
   START,
   switchCalibration,
 } from "./example.ts";
@@ -75,4 +76,13 @@ it("starts with the lifter's own numbers empty and the model filled in", () => {
   expect(START.bombOutCapPercent).toBe(5);
   expect(START["deadlift-steepness"]).toBe(EXAMPLE["deadlift-steepness"]);
   expect(START.correlation).toBe(EXAMPLE.correlation);
+});
+
+it("fills in the lifter's own numbers for the example, leaving the model alone", () => {
+  const model = calibrationValues("any").map(([name]) => name);
+  expect(EXAMPLE_LIFTER_NAMES).toHaveLength(3 * 6 + 2);
+  expect(EXAMPLE_LIFTER_NAMES.some((name) => model.includes(name))).toBe(false);
+  expect(new Set([...EXAMPLE_LIFTER_NAMES, ...model])).toEqual(
+    new Set(INPUT_NAMES),
+  );
 });

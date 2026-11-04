@@ -5,6 +5,7 @@ import {
   buildRequest,
   buildSearchRequest,
   buildTradeoffRequest,
+  parseInputName,
   planValues,
   sweepOnlyProblems,
   INPUT_NAMES,
@@ -85,6 +86,16 @@ it("keeps only the problems the sweep alone reports", () => {
   expect(
     sweepOnlyProblems([problem("dayForm"), problem("bombOutCap")]),
   ).toEqual([problem("bombOutCap")]);
+});
+
+it("reads the lift and field from a lift input's name", () => {
+  expect(parseInputName("bench-openerKg")).toEqual({
+    lift: "bench",
+    field: "openerKg",
+  });
+  expect(parseInputName("goalKg")).toBeUndefined();
+  expect(parseInputName("sex")).toBeUndefined();
+  expect(parseInputName("bench-goalKg")).toBeUndefined();
 });
 
 it("lists every number input once", () => {

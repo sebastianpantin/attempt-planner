@@ -36,6 +36,8 @@ import "./analytics.css";
 export interface AnalyticsData {
   evaluation: Evaluation;
   goalKg?: number;
+  /** The plans the evaluation simulated, which label its attempt paths. */
+  plans: PerLift<LiftPlanKg>;
   changes?: Extract<ChangesResponse, { kind: "changed" }>;
   onApply: (plans: PerLift<LiftPlanKg>) => void;
 }
@@ -79,7 +81,7 @@ export function renderAnalytics(root: HTMLElement, data: AnalyticsData) {
     ]),
     reachPanel(evaluation, goal),
     riskPanel(evaluation),
-    attemptPanel(evaluation, data.changes?.current.plans),
+    attemptPanel(evaluation, data.plans),
     dayPanel(evaluation),
     whatIfPanel(data),
   );
@@ -398,7 +400,7 @@ function marks(made: boolean[], rest = "") {
   return node;
 }
 
-function attemptPanel(evaluation: Evaluation, plans?: PerLift<LiftPlanKg>) {
+function attemptPanel(evaluation: Evaluation, plans: PerLift<LiftPlanKg>) {
   const body = element("div", "attempt-body");
   const tabs = element("div", "tabs");
   tabs.setAttribute("role", "group");
@@ -429,7 +431,7 @@ function attemptPanel(evaluation: Evaluation, plans?: PerLift<LiftPlanKg>) {
       row.insertCell().textContent = percent(share);
     };
     for (const row of view.rows) {
-      addRow([marks(row.made), ` ${pathText(row, plans?.[lift])}`], row.share);
+      addRow([marks(row.made), ` ${pathText(row, plans[lift])}`], row.share);
     }
     if (view.missedOpenerShare > 0) {
       addRow(

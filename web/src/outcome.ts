@@ -1,6 +1,5 @@
 import type { Percentiles, StandardErrors } from "../pkg/attempt_sim_wasm.js";
 import * as format from "./format.ts";
-import { percent, weight } from "./format.ts";
 
 /** The rarest chance put as a count of meets. */
 const RAREST = 500;
@@ -13,10 +12,11 @@ function friendlyCount(meets: number): number {
 
 /** A chance as a count of meets: "7 of 10", "1 in 25", "24 of 25". */
 export function chanceInWords(probability: number): string {
-  if (probability < 1 / RAREST) return `fewer than 1 in ${weight(RAREST)}`;
+  if (probability < 1 / RAREST)
+    return `fewer than 1 in ${format.weight(RAREST)}`;
   if (probability > 1 - 1 / RAREST) return "almost all";
   if (probability < 0.1) {
-    return `1 in ${weight(friendlyCount(1 / probability))}`;
+    return `1 in ${format.weight(friendlyCount(1 / probability))}`;
   }
   if (probability > 0.9) {
     const meets = Math.round(1 / (1 - probability));
@@ -104,7 +104,7 @@ export function ringFigure(figures: Figures, goalKg?: number) {
   const goal = knownGoal(figures, goalKg);
   if (goal) {
     return {
-      value: percent(goal.chance),
+      value: format.percent(goal.chance),
       label: `reach ${format.kg(goal.kg)}`,
       share: goal.chance,
     };
@@ -123,9 +123,9 @@ export function barFigures(
 ): [string, string][] {
   const goal = knownGoal(figures, goalKg);
   const lead: [string, string] = goal
-    ? [percent(goal.chance), `reach ${format.kg(goal.kg)}`]
+    ? [format.percent(goal.chance), `reach ${format.kg(goal.kg)}`]
     : [totalKg(figures.totalPercentilesKg.p50), "typical total"];
-  return [lead, [percent(figures.bombOutProbability), "bomb-out"]];
+  return [lead, [format.percent(figures.bombOutProbability), "bomb-out"]];
 }
 
 /** The average total said plainly: bomb-outs count as 0 kg, and the average of the meets with a total. */
@@ -150,7 +150,7 @@ export function rangeLabels({ p10, p50, p90 }: Percentiles) {
         : "";
   return {
     low: totalKg(p10),
-    median: `median ${p50 === 0 ? "bomb-out" : weight(p50)}`,
+    median: `median ${p50 === 0 ? "bomb-out" : format.weight(p50)}`,
     high: totalKg(p90),
     note,
   };
@@ -186,5 +186,5 @@ export const HIGH_RISK = 0.1;
 /** A warning for a plan that bombs out often, or nothing. */
 export const riskWarning = (bombOutProbability: number) =>
   bombOutProbability > HIGH_RISK
-    ? `High risk: ${percent(bombOutProbability)} of meets end in a bomb-out. Set a lower bomb-out limit in step 1 and press Find my best plan for a safer plan.`
+    ? `High risk: ${format.percent(bombOutProbability)} of meets end in a bomb-out. Set a lower bomb-out limit in step 1 and press Find my best plan for a safer plan.`
     : "";

@@ -142,6 +142,40 @@ describe("comparisonRows", () => {
     ).toEqual([["Up to 0.5% bomb-out", true]]);
   });
 
+  it("adds riskier bands when the family has few plans within 10% bomb-out", () => {
+    const points = [
+      plan(0.12, 600),
+      plan(0.15, 610),
+      plan(0.3, 630),
+      plan(0.6, 650),
+      plan(0.8, 640),
+    ];
+    expect(
+      comparisonRows(points, undefined).map((row) => [
+        row.label,
+        row.point.bombOutProbability,
+      ]),
+    ).toEqual([
+      ["10% to 20% bomb-out", 0.15],
+      ["20% to 50% bomb-out", 0.3],
+      ["Over 50% bomb-out", 0.6],
+    ]);
+  });
+
+  it("adds only as many riskier bands as it takes to fill the table", () => {
+    const points = [
+      plan(0.004, 540),
+      plan(0.04, 560),
+      plan(0.15, 600),
+      plan(0.3, 620),
+    ];
+    expect(
+      comparisonRows(points, undefined).map(
+        (row) => row.point.bombOutProbability,
+      ),
+    ).toEqual([0.004, 0.04, 0.15]);
+  });
+
   it("has no rows without plans", () => {
     expect(comparisonRows([], undefined)).toEqual([]);
   });
