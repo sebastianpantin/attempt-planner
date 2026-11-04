@@ -3,12 +3,15 @@ use std::fmt;
 pub const ATTEMPTS_PER_LIFT: usize = 3;
 pub const PLATE_STEP: Weight = Weight::from_grams(2_500);
 pub const BAR: Weight = Weight::from_grams(20_000);
+pub const HEAVIEST: Weight = Weight::from_grams(1_000_000);
 
 /// A bar weight, stored in grams so comparisons and plate checks are exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Weight(u32);
 
 impl Weight {
+    pub const ZERO: Weight = Weight(0);
+
     pub const fn from_grams(grams: u32) -> Self {
         Self(grams)
     }
@@ -19,12 +22,30 @@ impl Weight {
         (kg >= 0.0 && grams <= f64::from(u32::MAX)).then_some(Self(grams as u32))
     }
 
+    pub const fn grams(self) -> u32 {
+        self.0
+    }
+
     pub fn kg(self) -> f64 {
         f64::from(self.0) / 1000.0
     }
 
     pub fn is_loadable(self) -> bool {
         self.0.is_multiple_of(PLATE_STEP.0)
+    }
+}
+
+impl std::ops::Add for Weight {
+    type Output = Weight;
+
+    fn add(self, other: Weight) -> Weight {
+        Weight(self.0.saturating_add(other.0))
+    }
+}
+
+impl std::iter::Sum for Weight {
+    fn sum<I: Iterator<Item = Weight>>(iter: I) -> Weight {
+        iter.fold(Weight::ZERO, |total, weight| total + weight)
     }
 }
 
@@ -44,6 +65,7 @@ pub struct Attempt {
 pub enum RuleViolation {
     TooManyAttempts,
     BelowBar { attempt: usize },
+    TooHeavy { attempt: usize },
     NotLoadable { attempt: usize },
     Lighter { attempt: usize },
     NoIncreaseAfterMake { attempt: usize },
@@ -55,6 +77,9 @@ impl fmt::Display for RuleViolation {
             Self::TooManyAttempts => write!(f, "a lift has at most {ATTEMPTS_PER_LIFT} attempts"),
             Self::BelowBar { attempt } => {
                 write!(f, "attempt {attempt} is lighter than the {BAR} bar")
+            }
+            Self::TooHeavy { attempt } => {
+                write!(f, "attempt {attempt} is heavier than {HEAVIEST}")
             }
             Self::NotLoadable { attempt } => {
                 write!(f, "attempt {attempt} is not a multiple of {PLATE_STEP}")
@@ -85,6 +110,9 @@ pub fn check_progression(attempts: &[Attempt]) -> Result<(), RuleViolation> {
         if current.weight < BAR {
             return Err(RuleViolation::BelowBar { attempt });
         }
+        if current.weight > HEAVIEST {
+            return Err(RuleViolation::TooHeavy { attempt });
+        }
         if !current.weight.is_loadable() {
             return Err(RuleViolation::NotLoadable { attempt });
         }
@@ -109,20 +137,7 @@ pub fn best_attempt(attempts: &[Attempt]) -> Option<Weight> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn made(kg: f64) -> Attempt {
-        Attempt {
-            weight: Weight::from_kg(kg).unwrap(),
-            made: true,
-        }
-    }
-
-    fn missed(kg: f64) -> Attempt {
-        Attempt {
-            made: false,
-            ..made(kg)
-        }
-    }
+    use crate::testing::{made, missed};
 
     #[test]
     fn accepts_a_normal_progression() {
@@ -173,6 +188,19 @@ mod tests {
         assert_eq!(
             RuleViolation::BelowBar { attempt: 1 }.to_string(),
             "attempt 1 is lighter than the 20 kg bar"
+        );
+    }
+
+    #[test]
+    fn rejects_attempts_over_the_heaviest_loadable_weight() {
+        assert_eq!(check_progression(&[made(1_000.0)]), Ok(()));
+        assert_eq!(
+            check_progression(&[made(990.0), made(1_002.5)]),
+            Err(RuleViolation::TooHeavy { attempt: 2 })
+        );
+        assert_eq!(
+            RuleViolation::TooHeavy { attempt: 2 }.to_string(),
+            "attempt 2 is heavier than 1000 kg"
         );
     }
 
