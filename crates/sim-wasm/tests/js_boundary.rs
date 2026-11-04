@@ -1,0 +1,70 @@
+#![cfg(target_arch = "wasm32")]
+
+use attempt_sim_wasm::dto::EvaluateRequest;
+use attempt_sim_wasm::evaluate;
+use js_sys::JSON;
+use tsify::Ts;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+const REQUEST: &str = r#"{
+    "lifter": {
+        "lifts": {
+            "squat": { "expectedMaxKg": 200, "curve": { "ratioAtHalf": 1, "steepness": 1000 } },
+            "bench": { "expectedMaxKg": 130, "curve": { "ratioAtHalf": 1, "steepness": 1000 } },
+            "deadlift": { "expectedMaxKg": 240, "curve": { "ratioAtHalf": 1, "steepness": 1000 } }
+        },
+        "dayForm": { "spread": 0, "correlation": 0.5 }
+    },
+    "plans": {
+        "squat": { "openerKg": 180, "second": { "afterMakeKg": 10, "afterMissKg": 0 }, "third": { "afterMakeKg": 15, "afterMissKg": 0 } },
+        "bench": { "openerKg": 117.5, "second": { "afterMakeKg": 7.5, "afterMissKg": 0 }, "third": { "afterMakeKg": 7.5, "afterMissKg": 0 } },
+        "deadlift": { "openerKg": 215, "second": { "afterMakeKg": 15, "afterMissKg": 0 }, "third": { "afterMakeKg": 5, "afterMissKg": 0 } }
+    },
+    "simulations": 200,
+    "seed": 7
+}"#;
+
+fn parse(json: &str) -> Ts<EvaluateRequest> {
+    Ts::new_unchecked(JSON::parse(json).unwrap())
+}
+
+fn call(json: &str) -> String {
+    let response = evaluate(parse(json)).unwrap();
+    JSON::stringify(&response.js_value()).unwrap().into()
+}
+
+#[wasm_bindgen_test]
+fn returns_an_evaluation_with_camel_case_fields() {
+    let json = call(REQUEST);
+    assert!(
+        json.starts_with(r#"{"kind":"evaluated","evaluation":{"#),
+        "{json}"
+    );
+    assert!(json.contains(r#""expectedTotalKg":550"#), "{json}");
+    assert!(
+        json.contains(r#""bench":{"makeProbability":1,"expectedBestKg":125}"#),
+        "{json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn leaves_out_goal_figures_without_a_goal() {
+    let json = call(REQUEST);
+    assert!(!json.contains("goalProbability"), "{json}");
+    let with_goal = call(&REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "goalKg": 550"#));
+    assert!(with_goal.contains(r#""goalProbability":1"#), "{with_goal}");
+}
+
+#[wasm_bindgen_test]
+fn returns_problems_for_an_invalid_plan() {
+    let json = call(&REQUEST.replace(r#""openerKg": 180"#, r#""openerKg": 181"#));
+    assert_eq!(
+        json,
+        r#"{"kind":"invalid","problems":[{"lift":"squat","field":"opener","code":"notLoadable","message":"attempt 1 is not a multiple of 2.5 kg"}]}"#
+    );
+}
+
+#[wasm_bindgen_test]
+fn throws_on_input_of_the_wrong_shape() {
+    assert!(evaluate(parse(r#"{"plans": 3}"#)).is_err());
+}
