@@ -1,3 +1,4 @@
+pub mod evaluate;
 pub mod lift;
 pub mod model;
 pub mod plan;

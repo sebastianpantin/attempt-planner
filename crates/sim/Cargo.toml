@@ -8,3 +8,9 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+rand = { version = "0.10.3", default-features = false }
+rand_chacha = { version = "0.10.0", default-features = false }
+rand_distr = { version = "0.6.0", default-features = false, features = ["std_math"] }
+
+[dev-dependencies]
+proptest = "1.12.0"
