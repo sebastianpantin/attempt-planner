@@ -5,7 +5,7 @@ use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::plan::{Jumps, LiftPlan};
 use attempt_sim::rules::Weight;
-use attempt_sim::search::{self, Search, SearchInput};
+use attempt_sim::search::{self, ChangeInput, Outcome, Search, SearchInput, Setting};
 use attempt_sim::tradeoff::{self, PlanShape, TradeoffInput};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -144,14 +144,16 @@ impl From<InputProblem> for Problem {
     rename_all_fields = "camelCase"
 )]
 pub enum EvaluateResponse {
-    Evaluated { evaluation: Evaluation },
+    Evaluated { evaluation: Box<Evaluation> },
     Invalid { problems: Vec<Problem> },
 }
 
 /// Converts the request, runs the simulation and returns the evaluation or every problem.
 pub fn evaluate(request: &EvaluateRequest) -> EvaluateResponse {
     match to_input(request).and_then(|input| evaluate::evaluate(&input)) {
-        Ok(evaluation) => EvaluateResponse::Evaluated { evaluation },
+        Ok(evaluation) => EvaluateResponse::Evaluated {
+            evaluation: Box::new(evaluation),
+        },
         Err(problems) => EvaluateResponse::Invalid {
             problems: problems.into_iter().map(Problem::from).collect(),
         },
@@ -258,6 +260,96 @@ pub fn start_search(request: &SearchRequest) -> Result<Search, Vec<Problem>> {
         Err(problems)
     };
     search.map_err(|problems| problems.into_iter().map(Problem::from).collect())
+}
+
+/// How a set of plans does on the simulated meets.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanOutcome {
+    pub plans: PerLift<LiftPlanKg>,
+    pub bomb_out_probability: f64,
+    pub expected_total_kg: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub goal_probability: Option<f64>,
+}
+
+impl PlanOutcome {
+    fn new(plans: &PerLift<LiftPlan>, outcome: Outcome) -> Self {
+        Self {
+            plans: plans.map(|_, &plan| plan.into()),
+            bomb_out_probability: outcome.bomb_out_probability,
+            expected_total_kg: outcome.expected_total_kg,
+            goal_probability: outcome.goal_probability,
+        }
+    }
+}
+
+/// One setting of one lift moved by a plate step.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    pub lift: Lift,
+    pub setting: Setting,
+    /// The setting's new weight.
+    pub weight_kg: f64,
+    pub result: PlanOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Tsify)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChangesResponse {
+    Changed {
+        current: PlanOutcome,
+        /// Ranked as the search ranks plans, best first.
+        changes: Vec<Change>,
+    },
+    Invalid {
+        problems: Vec<Problem>,
+    },
+}
+
+/// Scores every one-step change to the request's plans on the same simulated meets.
+pub fn single_changes(request: &SearchRequest) -> ChangesResponse {
+    let mut problems = Vec::new();
+    let lifter = read_lifter(&mut problems, &request.lifter);
+    let goal = read_goal(&mut problems, request.goal_kg);
+    let plans = read_plans(&mut problems, &request.plans);
+    let input = ChangeInput {
+        lifter,
+        plans,
+        goal,
+        bomb_out_cap: request.bomb_out_cap,
+        simulations: request.simulations,
+        seed: u64::from(request.seed),
+    };
+    let result = if problems.is_empty() {
+        search::single_changes(&input)
+    } else {
+        Err(problems)
+    };
+    match result {
+        Ok(result) => ChangesResponse::Changed {
+            current: PlanOutcome::new(&plans, result.current),
+            changes: result
+                .changes
+                .into_iter()
+                .map(|change| Change {
+                    lift: change.lift,
+                    setting: change.setting,
+                    weight_kg: change.weight.kg(),
+                    result: PlanOutcome::new(&change.found.plans, change.found.outcome),
+                })
+                .collect(),
+        },
+        Err(problems) => ChangesResponse::Invalid {
+            problems: problems.into_iter().map(Problem::from).collect(),
+        },
+    }
 }
 
 fn to_tradeoff_input(request: &TradeoffRequest) -> Result<TradeoffInput, Vec<InputProblem>> {
@@ -391,7 +483,7 @@ mod tests {
 
     fn evaluation(request: &EvaluateRequest) -> Evaluation {
         match evaluate(request) {
-            EvaluateResponse::Evaluated { evaluation } => evaluation,
+            EvaluateResponse::Evaluated { evaluation } => *evaluation,
             EvaluateResponse::Invalid { problems } => panic!("unexpected problems: {problems:?}"),
         }
     }
@@ -592,6 +684,38 @@ mod tests {
             simulations: 500,
             seed: 7,
         }
+    }
+
+    #[test]
+    fn single_changes_report_the_current_plans_and_each_change_in_kg() {
+        let request = search_request();
+        let ChangesResponse::Changed { current, changes } = single_changes(&request) else {
+            panic!("expected changes");
+        };
+        assert_eq!(current.plans, request.plans);
+        let first = changes[0];
+        let setting_kg = |plans: &PerLift<LiftPlanKg>| {
+            let plan = plans.get(first.lift);
+            match first.setting {
+                Setting::Opener => plan.opener_kg,
+                Setting::SecondAfterMake => plan.second.after_make_kg,
+                Setting::SecondAfterMiss => plan.second.after_miss_kg,
+                Setting::ThirdAfterMake => plan.third.after_make_kg,
+                Setting::ThirdAfterMiss => plan.third.after_miss_kg,
+            }
+        };
+        assert_eq!(setting_kg(&first.result.plans), first.weight_kg);
+        assert_eq!((setting_kg(&request.plans) - first.weight_kg).abs(), 2.5);
+    }
+
+    #[test]
+    fn single_changes_report_an_invalid_plan() {
+        let mut request = search_request();
+        request.plans.bench.opener_kg = 101.0;
+        let ChangesResponse::Invalid { problems } = single_changes(&request) else {
+            panic!("expected problems");
+        };
+        assert_eq!(problems[0].field, InputField::Opener);
     }
 
     fn run(mut search: Search) -> SearchProgress {

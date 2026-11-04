@@ -36,6 +36,17 @@ pub fn estimate_maxes(
     Ok(estimate.into_ts()?)
 }
 
+/// Scores every one-step change to the request's plans on the same simulated meets.
+///
+/// Returns the changes, best first, or every problem with the input. Throws only when the
+/// input does not have the expected shape.
+#[wasm_bindgen(js_name = singleChanges)]
+pub fn single_changes(
+    request: Ts<dto::SearchRequest>,
+) -> Result<Ts<dto::ChangesResponse>, JsError> {
+    Ok(dto::single_changes(&request.to_rust()?).into_ts()?)
+}
+
 /// A plan search the caller steps through, so it can report progress and stop early.
 #[wasm_bindgen]
 pub struct PlanSearch(attempt_sim::search::Search);

@@ -1,10 +1,12 @@
 import {
+  type ChangesResponse,
   estimateMaxes,
   type MaxEstimate,
   type MaxEstimateInput,
   PlanSearch,
   type SearchProgress,
   type SearchRequest,
+  singleChanges,
   evaluate,
   type EvaluateRequest,
   type EvaluateResponse,
@@ -19,6 +21,7 @@ export type Failed = { kind: "failed"; message: string };
 export interface Jobs {
   evaluate: { request: EvaluateRequest; response: EvaluateResponse };
   tradeoff: { request: TradeoffRequest; response: TradeoffResponse };
+  changes: { request: SearchRequest; response: ChangesResponse };
   estimate: {
     request: MaxEstimateInput;
     response: { kind: "estimated"; estimate: MaxEstimate };
@@ -50,6 +53,8 @@ export function answer(
         return evaluate(job.request);
       case "tradeoff":
         return tradeoff(job.request);
+      case "changes":
+        return singleChanges(job.request);
       case "estimate":
         return { kind: "estimated", estimate: estimateMaxes(job.request) };
     }

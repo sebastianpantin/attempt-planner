@@ -1,7 +1,7 @@
-use crate::evaluate::{InputProblem, Lifter, MeetDays};
+use crate::evaluate::{InputProblem, Lifter, MeetDays, plan_problems};
 use crate::lift::{Lift, PerLift};
 pub use crate::outcome::Outcome;
-use crate::outcome::OutcomeTally;
+use crate::outcome::{OutcomeTally, is_valid_bomb_out_cap};
 use crate::plan::{Jumps, LiftPlan};
 use crate::rules::{ATTEMPTS_PER_LIFT, BAR, PLATE_STEP, Weight, best_attempt};
 use crate::tradeoff::{self, TradeoffInput};
@@ -21,7 +21,7 @@ pub struct SearchInput {
     pub seed: u64,
 }
 
-/// The best plans found so far, with their outcome on the search's simulated meets.
+/// Plans with their outcome on the simulated meets they were scored on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Found {
     pub plans: PerLift<LiftPlan>,
@@ -37,8 +37,11 @@ pub struct SearchProgress {
 }
 
 /// One number in a lift plan that the search varies while the rest stay fixed.
-#[derive(Debug, Clone, Copy)]
-enum Setting {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+pub enum Setting {
     Opener,
     SecondAfterMake,
     SecondAfterMiss,
@@ -71,6 +74,16 @@ impl Setting {
         (at(from_percent).max(lightest)..=at(to_percent))
             .step_by(PLATE_STEP.grams() as usize)
             .filter_map(|grams| u32::try_from(grams).ok().map(Weight::from_grams))
+    }
+
+    fn value(self, plan: &LiftPlan) -> Weight {
+        match self {
+            Self::Opener => plan.opener,
+            Self::SecondAfterMake => plan.second.after_make,
+            Self::SecondAfterMiss => plan.second.after_miss,
+            Self::ThirdAfterMake => plan.third.after_make,
+            Self::ThirdAfterMiss => plan.third.after_miss,
+        }
     }
 
     fn with(self, plan: LiftPlan, weight: Weight) -> LiftPlan {
@@ -168,7 +181,7 @@ impl Search {
         if !self.is_done() {
             let lift = Lift::ALL[self.next / SETTINGS.len()];
             let setting = SETTINGS[self.next % SETTINGS.len()];
-            let others = self.other_lifts_totals(lift);
+            let others = other_lifts_totals(&self.make_thresholds_kg, &self.best.plans, lift);
             let current = *self.best.plans.get(lift);
             let expected_max = self.lifter.lifts.get(lift).expected_max;
             let mut improved = false;
@@ -177,7 +190,13 @@ impl Search {
                 if candidate == current || !candidate.problems().is_empty() {
                     continue;
                 }
-                let outcome = self.score_lift(lift, &candidate, &others);
+                let outcome = score_lift(
+                    &self.make_thresholds_kg,
+                    lift,
+                    &candidate,
+                    &others,
+                    self.goal,
+                );
                 if self.ranks_higher(&outcome, &self.best.outcome) {
                     *self.best.plans.get_mut(lift) = candidate;
                     self.best.outcome = outcome;
@@ -200,30 +219,122 @@ impl Search {
     fn ranks_higher(&self, a: &Outcome, b: &Outcome) -> bool {
         rank(self.bomb_out_cap, a) > rank(self.bomb_out_cap, b)
     }
+}
 
-    /// Each day's total over the lifts other than `lift`, `None` when one of them bombs out.
-    fn other_lifts_totals(&self, lift: Lift) -> Vec<Option<Weight>> {
-        self.make_thresholds_kg
-            .iter()
-            .map(|thresholds| {
-                self.best
-                    .plans
-                    .iter()
-                    .filter(|(other, _)| *other != lift)
-                    .map(|(other, plan)| best_attempt(&plan.attempts(*thresholds.get(other))))
-                    .sum()
-            })
-            .collect()
+/// Each day's total over the lifts other than `lift`, `None` when one of them bombs out.
+fn other_lifts_totals(
+    make_thresholds_kg: &[PerLift<[f64; ATTEMPTS_PER_LIFT]>],
+    plans: &PerLift<LiftPlan>,
+    lift: Lift,
+) -> Vec<Option<Weight>> {
+    make_thresholds_kg
+        .iter()
+        .map(|thresholds| {
+            plans
+                .iter()
+                .filter(|(other, _)| *other != lift)
+                .map(|(other, plan)| best_attempt(&plan.attempts(*thresholds.get(other))))
+                .sum()
+        })
+        .collect()
+}
+
+/// The outcome with `plan` for `lift`, given the other lifts' totals on the same days.
+fn score_lift(
+    make_thresholds_kg: &[PerLift<[f64; ATTEMPTS_PER_LIFT]>],
+    lift: Lift,
+    plan: &LiftPlan,
+    others: &[Option<Weight>],
+    goal: Option<Weight>,
+) -> Outcome {
+    let mut tally = OutcomeTally::default();
+    for (thresholds, other) in make_thresholds_kg.iter().zip(others) {
+        let best = best_attempt(&plan.attempts(*thresholds.get(lift)));
+        tally.record(other.zip(best).map(|(other, best)| other + best), goal);
     }
+    tally.outcome(goal)
+}
 
-    fn score_lift(&self, lift: Lift, plan: &LiftPlan, others: &[Option<Weight>]) -> Outcome {
-        let mut tally = OutcomeTally::default();
-        for (thresholds, other) in self.make_thresholds_kg.iter().zip(others) {
-            let best = best_attempt(&plan.attempts(*thresholds.get(lift)));
-            tally.record(other.zip(best).map(|(other, best)| other + best), self.goal);
+/// The plans to change, and what to rank the changes by.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChangeInput {
+    pub lifter: Lifter,
+    pub plans: PerLift<LiftPlan>,
+    pub goal: Option<Weight>,
+    pub bomb_out_cap: Option<f64>,
+    pub simulations: u32,
+    pub seed: u64,
+}
+
+/// One setting of one lift moved by a plate step, and the plans it gives.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Change {
+    pub lift: Lift,
+    pub setting: Setting,
+    /// The setting's new weight.
+    pub weight: Weight,
+    pub found: Found,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Changes {
+    /// The outcome of the plans as given, on the same simulated meets as the changes.
+    pub current: Outcome,
+    /// Every valid change, ranked as the search ranks plans, best first.
+    pub changes: Vec<Change>,
+}
+
+/// Moves each setting of each lift one plate step up and down, keeping the rest of the
+/// plans, and scores every change on the same simulated meets as the plans as given.
+pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>> {
+    let days = MeetDays::new(input.lifter, input.simulations, input.seed);
+    let mut problems = days.as_ref().err().cloned().unwrap_or_default();
+    problems.extend(plan_problems(&input.plans));
+    if !is_valid_bomb_out_cap(input.bomb_out_cap) {
+        problems.push(InputProblem::InvalidBombOutCap);
+    }
+    let days = match days {
+        Ok(days) if problems.is_empty() => days,
+        _ => return Err(problems),
+    };
+    let thresholds: Vec<_> = days.iter().map(|day| day.make_thresholds_kg).collect();
+    let mut changes = Vec::new();
+    for lift in Lift::ALL {
+        let others = other_lifts_totals(&thresholds, &input.plans, lift);
+        let plan = *input.plans.get(lift);
+        for setting in SETTINGS {
+            let grams = setting.value(&plan).grams();
+            let steps = [
+                grams.checked_sub(PLATE_STEP.grams()),
+                grams.checked_add(PLATE_STEP.grams()),
+            ];
+            for weight in steps.into_iter().flatten().map(Weight::from_grams) {
+                let candidate = setting.with(plan, weight);
+                if !candidate.problems().is_empty() {
+                    continue;
+                }
+                let mut plans = input.plans;
+                *plans.get_mut(lift) = candidate;
+                let outcome = score_lift(&thresholds, lift, &candidate, &others, input.goal);
+                changes.push(Change {
+                    lift,
+                    setting,
+                    weight,
+                    found: Found { plans, outcome },
+                });
+            }
         }
-        tally.outcome(self.goal)
     }
+    let rank_of = |change: &Change| rank(input.bomb_out_cap, &change.found.outcome);
+    changes.sort_by(|a, b| {
+        rank_of(b)
+            .partial_cmp(&rank_of(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(Changes {
+        current: score(&thresholds, &input.plans, input.goal),
+        changes,
+    })
 }
 
 /// Feasible outcomes rank above those over the cap. Feasible ones rank by goal chance and
@@ -471,6 +582,67 @@ mod tests {
                 InputProblem::ExpectedMaxBelowBar { lift: Lift::Bench },
                 InputProblem::InvalidBombOutCap
             ]
+        );
+    }
+
+    fn change_input(goal: Option<f64>, cap: Option<f64>) -> ChangeInput {
+        let search = input(goal, cap);
+        ChangeInput {
+            lifter: search.lifter,
+            plans: timid_plans(),
+            goal: search.goal,
+            bomb_out_cap: cap,
+            simulations: search.simulations,
+            seed: search.seed,
+        }
+    }
+
+    #[test]
+    fn each_change_moves_one_setting_by_one_plate_step() {
+        let result = single_changes(&change_input(Some(560.0), None)).unwrap();
+        // Every opener and jump after a make can go both ways; a jump of 0 after a miss
+        // can only go up.
+        assert_eq!(result.changes.len(), 3 * (2 + 2 + 1 + 2 + 1));
+        for change in &result.changes {
+            let before = timid_plans();
+            let old = change.setting.value(before.get(change.lift)).grams();
+            assert_eq!(old.abs_diff(change.weight.grams()), PLATE_STEP.grams());
+            let mut expected = before;
+            *expected.get_mut(change.lift) =
+                change.setting.with(*before.get(change.lift), change.weight);
+            assert_eq!(change.found.plans, expected);
+        }
+    }
+
+    #[test]
+    fn changes_are_scored_on_the_same_meets_and_ranked_best_first() {
+        let changes = change_input(Some(560.0), Some(0.05));
+        let result = single_changes(&changes).unwrap();
+        let search = input(Some(560.0), Some(0.05));
+        assert_eq!(result.current, outcome_of(&search, timid_plans()));
+        for change in &result.changes {
+            assert_eq!(
+                change.found.outcome,
+                outcome_of(&search, change.found.plans)
+            );
+        }
+        let ranks: Vec<_> = result
+            .changes
+            .iter()
+            .map(|change| rank(changes.bomb_out_cap, &change.found.outcome))
+            .collect();
+        assert!(ranks.windows(2).all(|pair| pair[0] >= pair[1]));
+    }
+
+    #[test]
+    fn changes_report_every_problem_with_the_input() {
+        let mut input = change_input(None, Some(2.0));
+        input.plans.bench.opener = kg(101.0);
+        input.simulations = 0;
+        assert_eq!(
+            single_changes(&input).unwrap_err().len(),
+            3,
+            "simulations, the bench opener and the cap"
         );
     }
 }

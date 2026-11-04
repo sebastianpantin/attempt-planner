@@ -134,3 +134,28 @@ it("fails an estimate without attempts", () => {
     message: "no past meet has an attempt",
   });
 });
+
+it("lists one-step changes to the current plans, best first", () => {
+  const reply = answer({
+    kind: "changes",
+    request: buildSearchRequest(EXAMPLE),
+  });
+  if (reply.kind !== "changed") throw new Error(JSON.stringify(reply));
+  expect(reply.current.plans).toEqual(buildRequest(EXAMPLE, false).plans);
+  expect(reply.changes.length).toBeGreaterThan(20);
+  const [best] = reply.changes;
+  expect(best?.weightKg).toBeGreaterThanOrEqual(0);
+});
+
+it("reports the spread of totals and each lift's attempt paths", () => {
+  const reply = answer({
+    kind: "evaluate",
+    request: buildRequest(EXAMPLE, false),
+  });
+  if (reply.kind !== "evaluated") throw new Error(JSON.stringify(reply));
+  const { totals, lifts } = reply.evaluation;
+  const share = totals.reduce((sum, total) => sum + total.share, 0);
+  expect(share).toBeCloseTo(1, 9);
+  expect(lifts.squat.paths).toHaveLength(8);
+  expect(lifts.squat.attemptMakeProbabilities[0]).toBeGreaterThan(0.9);
+});

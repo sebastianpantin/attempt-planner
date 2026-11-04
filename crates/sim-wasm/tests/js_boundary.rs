@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use attempt_sim_wasm::dto::{EvaluateRequest, SearchRequest, TradeoffRequest};
-use attempt_sim_wasm::{PlanSearch, estimate_maxes, evaluate, tradeoff};
+use attempt_sim_wasm::{PlanSearch, estimate_maxes, evaluate, single_changes, tradeoff};
 use js_sys::JSON;
 use tsify::Ts;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -43,7 +43,7 @@ fn returns_an_evaluation_with_camel_case_fields() {
     assert!(json.contains(r#""expectedTotalKg":550"#), "{json}");
     assert!(
         json.contains(
-            r#""bench":{"makeProbability":1,"medianBestKg":125,"strengthMissRate":0.3333333333333333,"technicalMissRate":0}"#
+            r#""bench":{"makeProbability":1,"medianBestKg":125,"strengthMissRate":0.3333333333333333,"technicalMissRate":0,"attemptMakeProbabilities":[1,1,0],"technicalBombOutProbability":0,"paths":[{"made":[true,true,false],"bestKg":125,"share":1}"#
         ),
         "{json}"
     );
@@ -166,4 +166,25 @@ fn estimating_from_a_negative_weight_throws() {
     let json = PAST_MEETS.replace(r#""kg": 180"#, r#""kg": -180"#);
     let request = Ts::new_unchecked(JSON::parse(&json).unwrap());
     assert!(estimate_maxes(request).is_err());
+}
+
+#[wasm_bindgen_test]
+fn lists_single_changes_with_camel_case_fields() {
+    let response = single_changes(search_request(REQUEST)).unwrap();
+    let json: String = JSON::stringify(&response.js_value()).unwrap().into();
+    assert!(
+        json.starts_with(r#"{"kind":"changed","current":{"plans":"#),
+        "{json}"
+    );
+    assert!(json.contains(r#""setting":""#), "{json}");
+    assert!(json.contains(r#""weightKg":"#), "{json}");
+}
+
+#[wasm_bindgen_test]
+fn an_evaluation_lists_every_total() {
+    let json = call(REQUEST);
+    assert!(
+        json.contains(r#""totals":[{"totalKg":550,"share":1}]"#),
+        "{json}"
+    );
 }

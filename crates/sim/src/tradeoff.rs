@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 
 use crate::evaluate::{InputProblem, Lifter, MeetDays};
 use crate::lift::PerLift;
-use crate::outcome::OutcomeTally;
+use crate::outcome::{OutcomeTally, is_valid_bomb_out_cap};
 use crate::plan::{Jumps, LiftPlan};
 use crate::rules::{PLATE_STEP, Weight};
 
@@ -104,9 +104,7 @@ pub struct Tradeoff {
 /// meet days, so the differences between shapes are not noise. Shapes that round to the
 /// same plans as an earlier shape are left out.
 pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
-    let cap_is_valid = input
-        .bomb_out_cap
-        .is_none_or(|cap| (0.0..=1.0).contains(&cap));
+    let cap_is_valid = is_valid_bomb_out_cap(input.bomb_out_cap);
     let days = match (
         MeetDays::new(input.lifter, input.simulations, input.seed),
         cap_is_valid,
