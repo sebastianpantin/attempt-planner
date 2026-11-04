@@ -274,6 +274,8 @@ pub struct Change {
     /// The setting's new weight.
     pub weight: Weight,
     pub found: Found,
+    /// Whether the change ranks above the plans as given, as the search ranks plans.
+    pub improves: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -298,6 +300,8 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
         _ => return Err(problems),
     };
     let thresholds: Vec<_> = days.iter().map(|day| day.make_thresholds_kg).collect();
+    let current = score(&thresholds, &input.plans, input.goal);
+    let current_rank = rank(input.bomb_out_cap, &current);
     let mut changes = Vec::new();
     for lift in Lift::ALL {
         let others = other_lifts_totals(&thresholds, &input.plans, lift);
@@ -321,6 +325,7 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
                     setting,
                     weight,
                     found: Found { plans, outcome },
+                    improves: rank(input.bomb_out_cap, &outcome) > current_rank,
                 });
             }
         }
@@ -331,10 +336,7 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
             .partial_cmp(&rank_of(a))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    Ok(Changes {
-        current: score(&thresholds, &input.plans, input.goal),
-        changes,
-    })
+    Ok(Changes { current, changes })
 }
 
 /// Feasible outcomes rank above those over the cap. Feasible ones rank by goal chance and
@@ -632,6 +634,21 @@ mod tests {
             .map(|change| rank(changes.bomb_out_cap, &change.found.outcome))
             .collect();
         assert!(ranks.windows(2).all(|pair| pair[0] >= pair[1]));
+    }
+
+    #[test]
+    fn a_change_improves_when_it_ranks_above_the_plans_as_given() {
+        let changes = change_input(Some(560.0), Some(0.05));
+        let result = single_changes(&changes).unwrap();
+        let current = rank(changes.bomb_out_cap, &result.current);
+        for change in &result.changes {
+            assert_eq!(
+                change.improves,
+                rank(changes.bomb_out_cap, &change.found.outcome) > current
+            );
+        }
+        assert!(result.changes.iter().any(|change| change.improves));
+        assert!(result.changes.iter().any(|change| !change.improves));
     }
 
     #[test]

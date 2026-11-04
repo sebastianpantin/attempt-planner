@@ -178,6 +178,7 @@ fn lists_single_changes_with_camel_case_fields() {
     );
     assert!(json.contains(r#""setting":""#), "{json}");
     assert!(json.contains(r#""weightKg":"#), "{json}");
+    assert!(json.contains(r#""improves":"#), "{json}");
 }
 
 #[wasm_bindgen_test]

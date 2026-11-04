@@ -294,6 +294,8 @@ pub struct Change {
     /// The setting's new weight.
     pub weight_kg: f64,
     pub result: PlanOutcome,
+    /// Whether the change ranks above the current plans, as the search ranks plans.
+    pub improves: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Tsify)]
@@ -343,6 +345,7 @@ pub fn single_changes(request: &SearchRequest) -> ChangesResponse {
                     setting: change.setting,
                     weight_kg: change.weight.kg(),
                     result: PlanOutcome::new(&change.found.plans, change.found.outcome),
+                    improves: change.improves,
                 })
                 .collect(),
         },
@@ -706,6 +709,8 @@ mod tests {
         };
         assert_eq!(setting_kg(&first.result.plans), first.weight_kg);
         assert_eq!((setting_kg(&request.plans) - first.weight_kg).abs(), 2.5);
+        let improving = changes.iter().take_while(|change| change.improves).count();
+        assert!(changes[improving..].iter().all(|change| !change.improves));
     }
 
     #[test]
