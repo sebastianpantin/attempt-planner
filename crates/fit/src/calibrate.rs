@@ -14,7 +14,8 @@
 //! after a miss tells the two kinds of miss apart: after a technical miss the repeat is
 //! usually made, after a strength miss on a bad day it usually is not.
 
-use crate::minimize::minimize;
+use attempt_sim::minimize::minimize;
+use attempt_sim::normal::normal_draws;
 
 /// Each later attempt as a multiple of the attempt before it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -67,18 +68,7 @@ pub struct Calibration {
     pub error: f64,
 }
 
-const DRAWS: usize = 121;
-const DRAW_RANGE: f64 = 6.0;
 const LIGHTEST_DAY: f64 = 0.01;
-
-/// Points and weights that average a function over a standard normal draw.
-fn normal_draws() -> impl Iterator<Item = (f64, f64)> {
-    let width = 2.0 * DRAW_RANGE / (DRAWS - 1) as f64;
-    let points = (0..DRAWS).map(move |i| -DRAW_RANGE + i as f64 * width);
-    let density = |z: f64| (-z * z / 2.0).exp();
-    let total: f64 = points.clone().map(density).sum();
-    points.map(move |z| (z, density(z) / total))
-}
 
 /// Make rates for lifters with these parameters following the typical jumps, averaged
 /// over day form and over the paths the plan takes after makes and misses.
