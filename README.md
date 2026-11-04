@@ -1,20 +1,34 @@
 # attempt-planner
 
-A Monte Carlo simulator for choosing openers and attempt jumps at a powerlifting meet. The core is Rust, compiled to WebAssembly so it runs in the browser.
+Choose openers and attempt jumps for a powerlifting meet by simulating the meet thousands of times. The simulator is Rust, compiled to WebAssembly, so everything runs in the browser.
 
-Early stage. The page evaluates an attempt plan, charts the tradeoff between bomb-out risk and average total across a family of plans, and searches for the plan with the best chance of reaching a goal, optionally under a bomb-out cap. The default make-rate curve is still a placeholder.
+**Try it: https://sebastianpantin.github.io/attempt-planner/**
+
+![Changing the goal, then finding the best plan for it](docs/demo.gif)
+
+## What it does
+
+- **Evaluate a plan.** Enter each lift's expected max and a plan: an opener, then how much to jump for the 2nd and 3rd attempts after a make and after a miss. The page shows the average total, the chance of reaching a goal total, the chance of bombing out, the spread of totals, and each lift's median best, from 20,000 simulated meets (or 1,000,000 in precise mode). The average total and the two chances come with their Monte Carlo standard errors.
+- **See the tradeoff.** A chart of a whole family of plans, from conservative to aggressive, by bomb-out chance and average total. It highlights the best plan at each level of risk and the best plan for the goal. Any highlighted plan can be filled in with one click.
+- **Find the best plan.** A search for the openers and jumps with the best chance of reaching the goal, or the highest average total without a goal, optionally keeping the bomb-out chance under a cap.
+
+Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and every attempt after a made one must be heavier.
 
 ## The model
 
-- Each lift gets three attempts, each at least the 20 kg bar and in 2.5 kg steps. After a miss the next attempt may repeat the weight or go heavier; after a make it must go heavier. Missing all three attempts in a lift means no total.
-- On meet day the lifter's true max for each lift is uncertain, so every simulated meet draws a day form per lift.
-- The chance of making an attempt depends on how heavy it is relative to that day's max, along a logistic curve. The default curve is a hand-picked placeholder for now; fitting it to [OpenPowerlifting](https://www.openpowerlifting.org) attempt results comes later.
+- **Day form.** Nobody hits exactly their expected max on the day. Each simulated meet draws a day max for every lift: the expected max times 1 plus a normal draw with a spread of 3% by default. The three lifts share part of that draw (correlation 0.5 by default), because a good day for the squat tends to be a good day for the deadlift.
+- **Make rate.** The chance of making an attempt falls along a logistic curve as the load nears and passes the day max. The curve has two numbers per lift: the load ÷ day max ratio with a 50% make rate, and how steeply the chance falls around it. Attempts are independent once the day max is drawn; there is no fatigue.
+- **Plans.** The 2nd and 3rd attempts react to the attempt before: a jump after a make and a jump after a miss (0 repeats the weight). Missing all three attempts of a lift is a bomb-out, counted as a total of 0.
+- **Same days for every plan.** Every plan is scored against the same seeded simulated days, so differences between plans are not luck of the draw. Each roll becomes the weight below which that attempt is made, so scoring a plan only compares weights.
+- **Search.** Starts from the best plan in the tradeoff family, then changes one setting of one lift at a time and keeps any change that ranks higher, until a whole round changes nothing. It picks and reports plans on the same 20,000 meets, so its figures are slightly optimistic; precise mode re-checks a plan on more meets.
 
-For a given attempt plan the simulator reports the expected total, the chance of reaching a goal total and the chance of bombing out. Comparing plans shows the tradeoff between aggressive and conservative jumps.
+The day form and make-rate numbers are inputs under "Advanced". The default make-rate curve (50% at the day max, steepness 30) is hand-picked. Fitting it to [OpenPowerlifting](https://www.openpowerlifting.org) attempt results is hard because the data records outcomes but not day maxes, and lifters pick heavier attempts on days they feel strong.
+
+The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 
 ## Layout
 
-- `crates/sim`: the simulator, plain Rust with no WebAssembly dependencies
+- `crates/sim`: the simulator: rules, model, evaluation, the tradeoff sweep and the search. Plain Rust with no WebAssembly dependencies.
 - `crates/sim-wasm`: `wasm-bindgen` bindings for the browser
 - `web`: the page served on GitHub Pages, built with Vite and TypeScript. The simulation runs in a Web Worker so the page stays responsive.
 
