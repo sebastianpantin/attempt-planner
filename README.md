@@ -52,12 +52,22 @@ How often a repeated weight is made after a miss tells the two kinds of miss apa
 
 The fitted spread of the day max is 4.3%. It counts both how much a lifter's strength moves from day to day and how far off their expected max is. Lifters who competed more than once split the two apart: across about 79,000 pairs of meets by the same lifter 28 to 120 days apart, each lift's best moves by a robust 2.8–3.2% per meet, so about 3% is day form and the remaining 3% is uncertainty in the expected max. These are the planner's defaults. The same pairs give the correlation between lifts: a change in the squat goes with a change in the bench (0.37) and the deadlift (0.47), and bench with deadlift 0.34, averaging 0.4. The 3% day form is in line with how much elite weightlifters vary from one competition to the next, 2.3–2.7% ([McGuigan & Kane 2004](https://pubmed.ncbi.nlm.nih.gov/15320651/)).
 
+Men and women differ enough to fit separately, and the page's "Lifter" choice switches between the fits:
+
+| | Steepness (squat / bench / deadlift) | Technical miss (bench / deadlift) | Day form | Max uncertainty | Correlation |
+| --- | --- | --- | --- | --- | --- |
+| Men | 58 / 99 / 116 | 3.1 / 1.1% | 2.9% | 3.0% | 0.42 |
+| Women | 51 / 77 / 93 | 1.8 / 0.8% | 3.2% | 3.4% | 0.36 |
+
+Women's make rate falls less steeply past the day max, especially on the bench, and their results vary more from meet to meet, as in other strength sports ([McGuigan & Kane 2004](https://pubmed.ncbi.nlm.nih.gov/15320651/)).
+
 The fit still makes squat openers look safer than they are, and fitting IPF meets alone does not change that, so it is not down to judging in some federations. With one spread for all lifts, the model can't produce the 12% of missed squat openers while also keeping repeats after a miss as hard as they are. Missed depth may well be part of that: it tends to repeat, so it behaves more like a strength miss than a technical one. Lifters also pick their jumps knowing how the day is going, which the typical plan ignores.
 
 `crates/fit` does the calibration. Download the bulk CSV from https://data.openpowerlifting.org, unzip it, and run:
 
 ```sh
 cargo run --release -p attempt-fit -- --federation IPF path/to/openpowerlifting.csv
+cargo run --release -p attempt-fit -- --federation IPF --sex F path/to/openpowerlifting.csv
 ```
 
 It takes a few seconds. This uses data from the OpenPowerlifting project, https://www.openpowerlifting.org, which is in the public domain; this repository does not include it.

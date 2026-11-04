@@ -1,8 +1,9 @@
 //! Fits the planner's default make-rate curve to OpenPowerlifting results.
 //!
-//! Usage: `attempt-fit [--federation NAME] CSV`, where CSV is the OpenPowerlifting bulk CSV
-//! from https://data.openpowerlifting.org, unzipped. `--federation IPF` keeps only meets of
-//! the IPF and its member federations.
+//! Usage: `attempt-fit [--federation NAME] [--sex M|F] CSV`, where CSV is the
+//! OpenPowerlifting bulk CSV from https://data.openpowerlifting.org, unzipped.
+//! `--federation IPF` keeps only meets of the IPF and its member federations, and `--sex F`
+//! only women's entries.
 
 use std::error::Error;
 use std::fs::File;
@@ -11,31 +12,35 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use attempt_fit::calibrate::{MakeRates, calibrate_lifts};
-use attempt_fit::data::raw_full_power_entries;
+use attempt_fit::data::{Filter, raw_full_power_entries};
 use attempt_fit::history::meet_to_meet;
 use attempt_fit::stats::attempt_stats;
 use attempt_sim::lift::Lift;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
-    let mut federation = None;
-    let mut path = None;
+    let (mut federation, mut sex, mut path) = (None, None, None);
     while let Some(arg) = args.next() {
-        if arg == "--federation" {
-            federation = Some(
-                args.next()
-                    .ok_or("--federation needs a name, such as IPF")?,
-            );
-        } else {
-            path = Some(PathBuf::from(arg));
+        match arg.as_str() {
+            "--federation" => {
+                federation = Some(
+                    args.next()
+                        .ok_or("--federation needs a name, such as IPF")?,
+                )
+            }
+            "--sex" => sex = Some(args.next().ok_or("--sex needs M or F")?),
+            _ => path = Some(PathBuf::from(arg)),
         }
     }
+    let filter = Filter {
+        federation: federation.as_deref(),
+        sex: sex.as_deref(),
+    };
     let path =
         path.ok_or("give the OpenPowerlifting bulk CSV, from https://data.openpowerlifting.org")?;
 
     let started = Instant::now();
-    let entries =
-        raw_full_power_entries(BufReader::new(File::open(&path)?), federation.as_deref())?;
+    let entries = raw_full_power_entries(BufReader::new(File::open(&path)?), filter)?;
     println!("make rates: opener, 2nd after make/miss, 3rd after make/miss (%)");
     let stats = Lift::ALL.map(|lift| {
         attempt_stats(entries.iter().map(|entry| *entry.attempts.get(lift)))

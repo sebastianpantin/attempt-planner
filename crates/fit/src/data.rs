@@ -40,11 +40,19 @@ fn day_number(date: &str) -> Option<i32> {
     Some(era * 146_097 + day_of_era - 719_468)
 }
 
-/// Every raw full-power entry, keeping only `federation`'s meets when one is given. A meet
-/// belongs to a federation when it is the meet's `Federation` or `ParentFederation`.
+/// Which entries to keep, beyond raw full power.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Filter<'a> {
+    /// Keeps a meet when this is its `Federation` or `ParentFederation`.
+    pub federation: Option<&'a str>,
+    /// Keeps an entry when this is its `Sex`: `M`, `F` or `Mx`.
+    pub sex: Option<&'a str>,
+}
+
+/// Every raw full-power entry that passes `filter`.
 pub fn raw_full_power_entries(
     csv: impl Read,
-    federation: Option<&str>,
+    filter: Filter,
 ) -> Result<Vec<Entry>, Box<dyn Error>> {
     let mut reader = csv::Reader::from_reader(csv);
     let headers = reader.byte_headers()?.clone();
@@ -58,11 +66,15 @@ pub fn raw_full_power_entries(
     let date = column("Date")?;
     let event = column("Event")?;
     let equipment = column("Equipment")?;
-    let federation = match federation {
+    let federation = match filter.federation {
         Some(name) => Some((
             name.as_bytes(),
             [column("Federation")?, column("ParentFederation")?],
         )),
+        None => None,
+    };
+    let sex = match filter.sex {
+        Some(name) => Some((name.as_bytes(), column("Sex")?)),
         None => None,
     };
     let mut attempt_columns = PerLift::from_fn(|_| [0; 3]);
@@ -83,6 +95,11 @@ pub fn raw_full_power_entries(
         {
             continue;
         }
+        if let Some((name, index)) = sex
+            && &record[index] != name
+        {
+            continue;
+        }
         let text = |index: usize| std::str::from_utf8(&record[index]).ok();
         let kg = |index: usize| text(index).and_then(|t| t.parse().ok()).unwrap_or(f64::NAN);
         entries.push(Entry {
@@ -99,16 +116,16 @@ mod tests {
     use super::*;
 
     const CSV: &str = "\
-Name,Event,Equipment,Squat1Kg,Squat2Kg,Squat3Kg,Squat4Kg,Bench1Kg,Bench2Kg,Bench3Kg,Deadlift1Kg,Deadlift2Kg,Deadlift3Kg,TotalKg,Federation,ParentFederation,Date
-A,SBD,Raw,1,2,3,,101,102,103,201,202,203,306,SSF,IPF,2024-03-02
-B,SBD,Single-ply,1,2,3,,101,102,103,201,202,203,306,SSF,IPF,2024-03-02
-C,B,Raw,,,,,101,102,103,,,,103,SSF,IPF,2024-03-02
-D,SBD,Raw,1,2,3,,101,102,103,-201,,-203.5,,USAPL,,2024-03-03
+Name,Sex,Event,Equipment,Squat1Kg,Squat2Kg,Squat3Kg,Squat4Kg,Bench1Kg,Bench2Kg,Bench3Kg,Deadlift1Kg,Deadlift2Kg,Deadlift3Kg,TotalKg,Federation,ParentFederation,Date
+A,F,SBD,Raw,1,2,3,,101,102,103,201,202,203,306,SSF,IPF,2024-03-02
+B,M,SBD,Single-ply,1,2,3,,101,102,103,201,202,203,306,SSF,IPF,2024-03-02
+C,M,B,Raw,,,,,101,102,103,,,,103,SSF,IPF,2024-03-02
+D,M,SBD,Raw,1,2,3,,101,102,103,-201,,-203.5,,USAPL,,2024-03-03
 ";
 
     #[test]
     fn reads_the_attempts_of_raw_full_power_meets() {
-        let entries = raw_full_power_entries(CSV.as_bytes(), None).unwrap();
+        let entries = raw_full_power_entries(CSV.as_bytes(), Filter::default()).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].lifter, "A");
         assert_eq!(entries[0].attempts.squat, [1.0, 2.0, 3.0]);
@@ -121,7 +138,11 @@ D,SBD,Raw,1,2,3,,101,102,103,-201,,-203.5,,USAPL,,2024-03-03
     #[test]
     fn keeps_one_federations_meets_by_parent_or_own_name() {
         let lifters = |federation| {
-            raw_full_power_entries(CSV.as_bytes(), Some(federation))
+            let filter = Filter {
+                federation: Some(federation),
+                ..Filter::default()
+            };
+            raw_full_power_entries(CSV.as_bytes(), filter)
                 .unwrap()
                 .into_iter()
                 .map(|entry| entry.lifter)
@@ -130,6 +151,17 @@ D,SBD,Raw,1,2,3,,101,102,103,-201,,-203.5,,USAPL,,2024-03-03
         assert_eq!(lifters("IPF"), ["A"]);
         assert_eq!(lifters("SSF"), ["A"]);
         assert_eq!(lifters("USAPL"), ["D"]);
+    }
+
+    #[test]
+    fn keeps_one_sex() {
+        let filter = Filter {
+            sex: Some("M"),
+            ..Filter::default()
+        };
+        let entries = raw_full_power_entries(CSV.as_bytes(), filter).unwrap();
+        let lifters: Vec<_> = entries.into_iter().map(|entry| entry.lifter).collect();
+        assert_eq!(lifters, ["D"]);
     }
 
     #[test]
@@ -144,7 +176,8 @@ D,SBD,Raw,1,2,3,,101,102,103,-201,,-203.5,,USAPL,,2024-03-03
     #[test]
     fn names_a_missing_column() {
         let error =
-            raw_full_power_entries("Name,Date\nA,2024-03-02\n".as_bytes(), None).unwrap_err();
+            raw_full_power_entries("Name,Date\nA,2024-03-02\n".as_bytes(), Filter::default())
+                .unwrap_err();
         assert_eq!(error.to_string(), "no Event column");
     }
 }

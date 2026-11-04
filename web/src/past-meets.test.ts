@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EXAMPLE } from "./example.ts";
+import { CALIBRATIONS, EXAMPLE } from "./example.ts";
 import {
   buildEstimateRequest,
   dayNumber,
@@ -82,7 +82,12 @@ it("counts days from 1970 and rejects impossible dates", () => {
 });
 
 it("asks for an estimate with the page's curves and day-form spread", () => {
-  const request = buildEstimateRequest(EXAMPLE, [], 100);
+  const request = buildEstimateRequest(
+    EXAMPLE,
+    [],
+    100,
+    CALIBRATIONS.any.typicalOpener,
+  );
   expect(request.curves.bench).toEqual({
     ratioAtHalf: 1,
     steepness: EXAMPLE["bench-steepness"],
@@ -104,6 +109,6 @@ it("fills in the estimated maxes and their average uncertainty", () => {
   expect(values).toEqual([
     ["squat-expectedMaxKg", 201.5],
     ["deadlift-expectedMaxKg", 244.5],
-    ["maxUncertaintyPercent", 2],
+    ["maxUncertaintyPercent", 2.1],
   ]);
 });

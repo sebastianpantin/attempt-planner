@@ -5,7 +5,6 @@ import type {
   PastAttempt,
   PastMeet,
 } from "../pkg/attempt_sim_wasm.js";
-import { TYPICAL_OPENER } from "./example.ts";
 import { type FormValues, type InputName, inputName, LIFTS } from "./inputs.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -144,6 +143,7 @@ export function buildEstimateRequest(
   values: FormValues,
   meets: PastMeet[],
   onDay: number,
+  typicalOpener: MaxEstimateInput["typicalOpener"],
 ): MaxEstimateInput {
   const curve = (lift: Lift) => ({
     ratioAtHalf: values[inputName(lift, "ratioAtHalf")],
@@ -156,15 +156,16 @@ export function buildEstimateRequest(
       bench: curve("bench"),
       deadlift: curve("deadlift"),
     },
-    typicalOpener: TYPICAL_OPENER,
+    typicalOpener,
     dayFormSpread: values.spreadPercent / 100,
     meets,
     onDay,
   };
 }
 
-/** Rounds to the nearest half, the step of the percent inputs. */
+/** Expected maxes go to the nearest half kilogram, percentages to a tenth. */
 const toHalf = (value: number) => Math.round(value * 2) / 2;
+const toTenth = (value: number) => Math.round(value * 10) / 10;
 
 /**
  * The inputs an estimate fills in: each estimated lift's expected max, and the
@@ -183,7 +184,7 @@ export function estimateValues(estimate: MaxEstimate): [InputName, number][] {
     const mean =
       found.reduce((sum, { uncertainty }) => sum + uncertainty, 0) /
       found.length;
-    values.push(["maxUncertaintyPercent", Math.max(0.5, toHalf(mean * 100))]);
+    values.push(["maxUncertaintyPercent", Math.max(0.5, toTenth(mean * 100))]);
   }
   return values;
 }
