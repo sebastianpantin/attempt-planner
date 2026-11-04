@@ -12,11 +12,13 @@ const twoPercentDecimals = percentFormat(2);
 
 export const kg = (value: number) => `${oneDecimal.format(value)} kg`;
 
-/** One decimal, or two under 1% so a small chance never reads as 0.0%. */
+/** One decimal, or two under 1% so a small chance never reads as 0.0%. Exactly 0 is 0%. */
 export const percent = (probability: number) =>
-  (probability < 0.01 ? twoPercentDecimals : onePercentDecimal).format(
-    probability,
-  );
+  probability === 0
+    ? "0%"
+    : (probability < 0.01 ? twoPercentDecimals : onePercentDecimal).format(
+        probability,
+      );
 
 const upToTwoPercentDecimals = new Intl.NumberFormat("en", {
   style: "percent",

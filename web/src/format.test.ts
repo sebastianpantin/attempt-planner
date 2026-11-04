@@ -17,7 +17,7 @@ it("shows probabilities with exactly one decimal", () => {
 it("shows probabilities under 1% with two decimals", () => {
   expect(percent(0.0014)).toBe("0.14%");
   expect(percent(0.00012)).toBe("0.01%");
-  expect(percent(0)).toBe("0.00%");
+  expect(percent(0)).toBe("0%");
 });
 
 it("drops trailing zeros for axis ticks", () => {
