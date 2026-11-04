@@ -1,15 +1,17 @@
 import type { FormValues } from "./inputs.ts";
 
 /**
- * Calibrated to OpenPowerlifting raw full-power meets by `crates/fit`: the midpoint is
- * the expected max by definition, and each lift's steepness and technical-miss chance,
- * with one day-form spread, match how often lifters make each attempt after a make
- * and after a miss.
+ * Calibrated to raw full-power IPF meets in OpenPowerlifting by `crates/fit`: the
+ * midpoint is the expected max by definition, and each lift's steepness and
+ * technical-miss chance, with one spread of the day max, match how often lifters make
+ * each attempt after a make and after a miss. The day-to-day part of that spread and
+ * the correlation between lifts come from lifters' consecutive meets.
  */
 const RATIO_AT_HALF = 1;
-const STEEPNESS = { squat: 53, bench: 90, deadlift: 106 };
-const TECHNICAL_MISS_PERCENT = { squat: 0, bench: 3, deadlift: 1.5 };
-const SPREAD_PERCENT = 4.5;
+const STEEPNESS = { squat: 56, bench: 94, deadlift: 109 };
+const TECHNICAL_MISS_PERCENT = { squat: 0, bench: 3, deadlift: 1 };
+const SPREAD_PERCENT = 3;
+const MAX_UNCERTAINTY_PERCENT = 3;
 
 export const EXAMPLE: FormValues = {
   "squat-expectedMaxKg": 200,
@@ -41,6 +43,7 @@ export const EXAMPLE: FormValues = {
   "deadlift-technicalMissPercent": TECHNICAL_MISS_PERCENT.deadlift,
   goalKg: 550,
   spreadPercent: SPREAD_PERCENT,
-  correlation: 0.5,
+  maxUncertaintyPercent: MAX_UNCERTAINTY_PERCENT,
+  correlation: 0.4,
   bombOutCapPercent: 5,
 };

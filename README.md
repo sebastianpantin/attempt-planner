@@ -16,7 +16,7 @@ Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and ev
 
 ## The model
 
-- **Day form.** Nobody hits exactly their expected max on the day. Each simulated meet draws a day max for every lift: the expected max times 1 plus a normal draw with a spread of 4.5% by default. The three lifts share part of that draw (correlation 0.5 by default), because a good day for the squat tends to be a good day for the deadlift.
+- **Day form.** Nobody hits exactly their expected max on the day. Each simulated meet draws a day max for every lift: the expected max times 1 plus a normal draw. Its spread combines two things: how much strength moves from day to day (3% by default) and how far off the expected max itself may be (3% by default; lower it when the max comes from a recent test or meet). The three lifts share part of that draw (correlation 0.4 by default), because a good day for the squat tends to be a good day for the deadlift.
 - **Two kinds of miss.** A strength miss happens when the load is too heavy for the day: the chance of making an attempt falls along a logistic curve as the load nears and passes the day max, set by the load ÷ day max ratio with a 50% make rate and how steeply the chance falls around it. A technical miss, like a depth call or a missed command, is a fixed chance per attempt whatever the load. Results show each lift's share of attempts missed each way. Attempts are independent once the day max is drawn; there is no fatigue.
 - **Plans.** The 2nd and 3rd attempts react to the attempt before: a jump after a make and a jump after a miss (0 repeats the weight). Missing all three attempts of a lift is a bomb-out, counted as a total of 0.
 - **Same days for every plan.** Every plan is scored against the same seeded simulated days, so differences between plans are not luck of the draw. Each roll becomes the weight below which that attempt is made, so scoring a plan only compares weights.
@@ -28,26 +28,26 @@ The day form and make-rate numbers are inputs under "Advanced".
 
 [OpenPowerlifting](https://www.openpowerlifting.org) records every attempt and whether it was made, but not anyone's max on the day, so the curve can't be read off the data directly. Instead it is calibrated to how often lifters make each attempt:
 
-- From about 900,000 raw full-power meets per lift, measure how often the 1st, 2nd and 3rd attempts are made, and the median jump after a make and after a miss.
+- From about 490,000 raw full-power IPF meets per lift (the planner follows IPF rules), measure how often the 1st, 2nd and 3rd attempts are made, and the median jump after a make and after a miss.
 - Call the expected max the weight a lifter makes half the time on a normal day, apart from technical misses, so the curve's midpoint is 1.
-- Fit each lift's steepness, technical-miss chance and typical opener, with one day-form spread shared by all lifts, so that a lifter following the typical jumps makes the opener, and the 2nd and 3rd attempts after a make and after a miss, as often as the data says.
+- Fit each lift's steepness, technical-miss chance and typical opener, with one spread of the day max shared by all lifts, so that a lifter following the typical jumps makes the opener, and the 2nd and 3rd attempts after a make and after a miss, as often as the data says.
 
 How often a repeated weight is made after a miss tells the two kinds of miss apart. After a technical miss the repeat is usually made; after a strength miss on a bad day it usually is not. In the data, repeats after a miss are made only 42–59% of the time, so most misses behave like strength misses.
 
 | Lift | Made: 1st, 2nd after make / miss, 3rd after make / miss | Predicted | Steepness | Technical miss | Typical opener |
 | --- | --- | --- | --- | --- | --- |
-| Squat | 88, 85 / 71, 68 / 55% | 98, 86 / 73, 66 / 54% | 53 | 0% | 89% |
-| Bench | 92, 82 / 72, 50 / 37% | 94, 76 / 72, 55 / 36% | 90 | 3.1% | 91% |
-| Deadlift | 95, 90 / 78, 65 / 38% | 98, 87 / 78, 66 / 38% | 106 | 1.4% | 89% |
+| Squat | 89, 86 / 73, 68 / 55% | 98, 86 / 75, 66 / 54% | 56 | 0% | 89% |
+| Bench | 92, 82 / 73, 51 / 37% | 95, 76 / 73, 56 / 37% | 94 | 3.0% | 91% |
+| Deadlift | 96, 89 / 78, 64 / 37% | 98, 88 / 78, 65 / 37% | 109 | 0.9% | 89% |
 
-The fitted day-form spread is 4.5%, which is the planner's default. It counts both how much a lifter's strength moves from day to day and how far off their expected max is.
+The fitted spread of the day max is 4.3%. It counts both how much a lifter's strength moves from day to day and how far off their expected max is. Lifters who competed more than once split the two apart: across about 79,000 pairs of meets by the same lifter 28 to 120 days apart, each lift's best moves by a robust 2.8–3.2% per meet, so about 3% is day form and the remaining 3% is uncertainty in the expected max. These are the planner's defaults. The same pairs give the correlation between lifts: a change in the squat goes with a change in the bench (0.37) and the deadlift (0.47), and bench with deadlift 0.34, averaging 0.4. The 3% day form is in line with how much elite weightlifters vary from one competition to the next, 2.3–2.7% ([McGuigan & Kane 2004](https://pubmed.ncbi.nlm.nih.gov/15320651/)).
 
-The fit still makes squat openers look safer than they are. With one spread for all lifts, the model can't produce the 12% of missed squat openers while also keeping repeats after a miss as hard as they are. Missed depth may well be part of that: it tends to repeat, so it behaves more like a strength miss than a technical one. Lifters also pick their jumps knowing how the day is going, which the typical plan ignores.
+The fit still makes squat openers look safer than they are, and fitting IPF meets alone does not change that, so it is not down to judging in some federations. With one spread for all lifts, the model can't produce the 12% of missed squat openers while also keeping repeats after a miss as hard as they are. Missed depth may well be part of that: it tends to repeat, so it behaves more like a strength miss than a technical one. Lifters also pick their jumps knowing how the day is going, which the typical plan ignores.
 
 `crates/fit` does the calibration. Download the bulk CSV from https://data.openpowerlifting.org, unzip it, and run:
 
 ```sh
-cargo run --release -p attempt-fit -- path/to/openpowerlifting.csv
+cargo run --release -p attempt-fit -- --federation IPF path/to/openpowerlifting.csv
 ```
 
 It takes a few seconds. This uses data from the OpenPowerlifting project, https://www.openpowerlifting.org, which is in the public domain; this repository does not include it.

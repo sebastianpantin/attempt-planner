@@ -41,12 +41,21 @@ describe("buildRequest", () => {
     });
   });
 
-  it("takes the day-form spread in percent", () => {
+  it("takes the day-form spreads in percent", () => {
     const request = buildRequest(
-      { ...EXAMPLE, spreadPercent: 4, correlation: 0.3 },
+      {
+        ...EXAMPLE,
+        spreadPercent: 4,
+        maxUncertaintyPercent: 2,
+        correlation: 0.3,
+      },
       false,
     );
-    expect(request.lifter.dayForm).toEqual({ spread: 0.04, correlation: 0.3 });
+    expect(request.lifter.dayForm).toEqual({
+      spread: 0.04,
+      maxUncertainty: 0.02,
+      correlation: 0.3,
+    });
   });
 
   it("leaves the goal out when it is empty", () => {
@@ -96,6 +105,7 @@ describe("inputsFor", () => {
     expect(inputsFor(problem("goal"))).toEqual(["goalKg"]);
     expect(inputsFor(problem("dayForm"))).toEqual([
       "spreadPercent",
+      "maxUncertaintyPercent",
       "correlation",
     ]);
   });
@@ -115,7 +125,7 @@ describe("describeProblem", () => {
 });
 
 it("lists every number input once", () => {
-  expect(INPUT_NAMES).toHaveLength(3 * 9 + 4);
+  expect(INPUT_NAMES).toHaveLength(3 * 9 + 5);
   expect(new Set(INPUT_NAMES).size).toBe(INPUT_NAMES.length);
   expect(Object.keys(EXAMPLE).sort()).toEqual([...INPUT_NAMES].sort());
 });

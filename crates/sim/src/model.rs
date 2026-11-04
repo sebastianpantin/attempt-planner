@@ -52,9 +52,15 @@ impl MakeRateCurve {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct DayForm {
-    /// Standard deviation of the day max, as a fraction of the expected max.
+    /// How much the lifter's strength moves from one day to the next, as a standard
+    /// deviation over the expected max.
     pub spread: f64,
-    /// Share of that variation common to all three lifts, from 0 (independent) to 1.
+    /// How far off the expected max itself may be, as a standard deviation over it. Adds to
+    /// `spread`, shared between the lifts by the same correlation.
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
+    pub max_uncertainty: f64,
+    /// Share of the variation common to all three lifts, from 0 (independent) to 1.
     pub correlation: f64,
 }
 
@@ -71,14 +77,23 @@ impl DayForm {
     ) -> PerLift<f64> {
         let shared_weight = self.correlation.sqrt();
         let own_weight = (1.0 - self.correlation).sqrt();
+        let spread = self.total_spread();
         expected_kg.map(|lift, &expected| {
-            let deviation = self.spread * (shared_weight * shared + own_weight * own.get(lift));
+            let deviation = spread * (shared_weight * shared + own_weight * own.get(lift));
             (expected * (1.0 + deviation)).max(expected * Self::MIN_DAY_MAX_FRACTION)
         })
     }
 
+    /// The standard deviation of the day max around the expected max, both parts together.
+    pub fn total_spread(&self) -> f64 {
+        self.spread.hypot(self.max_uncertainty)
+    }
+
     pub fn is_valid(&self) -> bool {
-        (0.0..=Self::MAX_SPREAD).contains(&self.spread) && (0.0..=1.0).contains(&self.correlation)
+        self.spread >= 0.0
+            && self.max_uncertainty >= 0.0
+            && self.total_spread() <= Self::MAX_SPREAD
+            && (0.0..=1.0).contains(&self.correlation)
     }
 }
 
@@ -179,6 +194,7 @@ mod tests {
     fn no_spread_means_the_expected_max() {
         let form = DayForm {
             spread: 0.0,
+            max_uncertainty: 0.0,
             correlation: 0.5,
         };
         let expected = PerLift {
@@ -194,6 +210,7 @@ mod tests {
     fn full_correlation_moves_every_lift_by_the_shared_draw() {
         let form = DayForm {
             spread: 0.05,
+            max_uncertainty: 0.0,
             correlation: 1.0,
         };
         let expected = PerLift::from_fn(|_| 200.0);
@@ -212,6 +229,7 @@ mod tests {
     fn no_correlation_uses_only_each_lifts_own_draw() {
         let form = DayForm {
             spread: 0.05,
+            max_uncertainty: 0.0,
             correlation: 0.0,
         };
         let expected = PerLift::from_fn(|_| 200.0);
@@ -227,9 +245,26 @@ mod tests {
     }
 
     #[test]
+    fn max_uncertainty_adds_to_the_day_form_spread() {
+        let form = DayForm {
+            spread: 0.03,
+            max_uncertainty: 0.04,
+            correlation: 1.0,
+        };
+        assert!((form.total_spread() - 0.05).abs() < 1e-12);
+        let maxes = form.day_maxes(
+            &PerLift::from_fn(|_| 200.0),
+            1.0,
+            &PerLift::from_fn(|_| 0.0),
+        );
+        assert!((maxes.squat - 210.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn day_max_never_drops_to_zero() {
         let form = DayForm {
             spread: 0.5,
+            max_uncertainty: 0.0,
             correlation: 1.0,
         };
         let maxes = form.day_maxes(
@@ -245,20 +280,25 @@ mod tests {
         assert!(
             DayForm {
                 spread: 0.03,
+                max_uncertainty: 0.0,
                 correlation: 0.5
             }
             .is_valid()
         );
-        for (spread, correlation) in [
-            (-0.01, 0.5),
-            (0.6, 0.5),
-            (0.03, 1.1),
-            (0.03, -0.1),
-            (f64::NAN, 0.5),
+        for (spread, max_uncertainty, correlation) in [
+            (-0.01, 0.0, 0.5),
+            (0.6, 0.0, 0.5),
+            (0.03, -0.01, 0.5),
+            (0.4, 0.4, 0.5),
+            (0.03, f64::NAN, 0.5),
+            (0.03, 0.0, 1.1),
+            (0.03, 0.0, -0.1),
+            (f64::NAN, 0.0, 0.5),
         ] {
             assert!(
                 !DayForm {
                     spread,
+                    max_uncertainty,
                     correlation
                 }
                 .is_valid()

@@ -368,6 +368,7 @@ mod tests {
                 },
                 day_form: DayForm {
                     spread: 0.0,
+                    max_uncertainty: 0.0,
                     correlation: 0.5,
                 },
             },
