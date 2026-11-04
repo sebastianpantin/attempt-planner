@@ -22,7 +22,29 @@ Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and ev
 - **Same days for every plan.** Every plan is scored against the same seeded simulated days, so differences between plans are not luck of the draw. Each roll becomes the weight below which that attempt is made, so scoring a plan only compares weights.
 - **Search.** Starts from the best plan in the tradeoff family, then changes one setting of one lift at a time and keeps any change that ranks higher, until a whole round changes nothing. It picks and reports plans on the same 20,000 meets, so its figures are slightly optimistic; precise mode re-checks a plan on more meets.
 
-The day form and make-rate numbers are inputs under "Advanced". The default make-rate curve (50% at the day max, steepness 30) is hand-picked. Fitting it to [OpenPowerlifting](https://www.openpowerlifting.org) attempt results is hard because the data records outcomes but not day maxes, and lifters pick heavier attempts on days they feel strong.
+The day form and make-rate numbers are inputs under "Advanced".
+
+### Where the default make-rate curve comes from
+
+[OpenPowerlifting](https://www.openpowerlifting.org) records every attempt and whether it was made, but not anyone's max on the day, so the curve can't be read off the data directly. Instead it is calibrated to how often lifters make each attempt:
+
+- From about 900,000 raw full-power meets per lift, measure how often the 1st, 2nd and 3rd attempts are made, and the median jump after a make and after a miss.
+- Call the expected max the weight a lifter makes half the time on a normal day, so the curve's midpoint is 1. Give the day max the default 3% spread.
+- For each lift, find the steepness, and where lifters open relative to their expected max, that make a lifter following the typical jumps succeed as often as the data says.
+
+| Lift | Made 1st / 2nd / 3rd | Fitted steepness | Typical opener | Predicted 1st / 2nd / 3rd |
+| --- | --- | --- | --- | --- |
+| Squat | 88% / 84% / 66% | 19 | 87% | 91% / 80% / 68% |
+| Bench | 92% / 81% / 47% | 59 | 91% | 98% / 79% / 49% |
+| Deadlift | 95% / 89% / 62% | 49 | 89% | 99% / 88% / 63% |
+
+The fit matches 2nd and 3rd attempts closely but makes openers look safer than they are, most clearly for the bench. Real meets have misses that have little to do with the load, like a missed command or a depth call, and the model has no term for them. Lifters also pick their jumps knowing how the day is going, which the typical plan ignores.
+
+`crates/fit` does the calibration. It reads the Parquet file that [openpowerlifting-mcp](https://github.com/sebastianpantin/openpowerlifting-mcp) downloads and converts:
+
+```sh
+cargo run --release -p attempt-fit -- path/to/openpowerlifting.parquet
+```
 
 The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 
@@ -30,6 +52,7 @@ The engine takes plain data in and out, with no browser code, so other front end
 
 - `crates/sim`: the simulator: rules, model, evaluation, the tradeoff sweep and the search. Plain Rust with no WebAssembly dependencies.
 - `crates/sim-wasm`: `wasm-bindgen` bindings for the browser
+- `crates/fit`: calibrates the default make-rate curve to OpenPowerlifting results
 - `web`: the page served on GitHub Pages, built with Vite and TypeScript. The simulation runs in a Web Worker so the page stays responsive.
 
 ## Development
