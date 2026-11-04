@@ -122,6 +122,16 @@ describe("describeProblem", () => {
       }),
     ).toBe("2nd attempt: attempt 2 is not a multiple of 2.5 kg");
   });
+
+  it("states caps in the page's percent units", () => {
+    expect(
+      describeProblem({
+        field: "bombOutCap",
+        code: "invalidBombOutCap",
+        message: "bomb-out cap must be a chance between 0 and 1",
+      }),
+    ).toBe("Bomb-out cap: must be from 0 to 100%");
+  });
 });
 
 it("lists every number input once", () => {

@@ -283,6 +283,11 @@ const status = (id: string, text: string) => {
 };
 
 let shownEvaluation: Evaluation | undefined;
+let evaluationProblems: Problem[] = [];
+/** The sweep is the only request that checks the bomb-out cap. */
+let capProblems: Problem[] = [];
+const showProblems = () =>
+  markProblems([...evaluationProblems, ...capProblems]);
 let shownTradeoff: Extract<TradeoffResponse, { kind: "swept" }> | undefined;
 let shownBombOutCap: number | undefined;
 
@@ -355,7 +360,8 @@ const submitEvaluation = simulationWorker("evaluate", {
     status("status", `Simulating ${count.format(request.simulations)} meets…`),
   finished(reply, request) {
     byId("results").removeAttribute("aria-busy");
-    markProblems(reply.kind === "invalid" ? reply.problems : []);
+    evaluationProblems = reply.kind === "invalid" ? reply.problems : [];
+    showProblems();
     shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
     showEvaluation(shownEvaluation, request.simulations);
     showTradeoff();
@@ -374,6 +380,11 @@ const submitTradeoff = simulationWorker("tradeoff", {
   finished(reply, request) {
     byId("tradeoff").removeAttribute("aria-busy");
     shownTradeoff = reply.kind === "swept" ? reply : undefined;
+    capProblems =
+      reply.kind === "invalid"
+        ? reply.problems.filter((problem) => problem.field === "bombOutCap")
+        : [];
+    showProblems();
     shownBombOutCap = request.bombOutCap;
     showTradeoff();
     report(

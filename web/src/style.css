@@ -287,9 +287,8 @@ thead th {
   display: none;
 }
 
-#estimate-status:empty,
-#estimate-results:empty,
-#search-status:empty {
+[role="status"]:empty,
+#estimate-results:empty {
   margin: 0;
   padding: 0;
 }
@@ -342,8 +341,4 @@ caption {
 
 .layout > * {
   min-width: 0;
-}
-
-#tradeoff-best-label {
-  display: inline;
 }

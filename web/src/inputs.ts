@@ -166,5 +166,14 @@ const FIELD_LABELS: Record<InputField, string> = {
   bombOutCap: "Bomb-out cap",
 };
 
-export const describeProblem = ({ field, message }: Problem) =>
-  `${FIELD_LABELS[field]}: ${message}`;
+/** Messages restated in the page's percent units where the engine speaks in fractions. */
+const PERCENT_MESSAGES: Partial<Record<Problem["code"], string>> = {
+  invalidBombOutCap: "must be from 0 to 100%",
+  invalidCurve:
+    "needs a positive midpoint and steepness, and a technical-miss chance from 0 to below 100%",
+  invalidDayForm:
+    "spreads must be at least 0% and combine to at most 50%, and correlation must be from 0 to 1",
+};
+
+export const describeProblem = ({ field, code, message }: Problem) =>
+  `${FIELD_LABELS[field]}: ${PERCENT_MESSAGES[code] ?? message}`;

@@ -39,6 +39,16 @@
               <input name="goalKg" type="number" min="0" step="2.5" />
             </label>
             <label>
+              Highest bomb-out chance (%, optional)
+              <input
+                name="bombOutCapPercent"
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+              />
+            </label>
+            <label>
               <input name="precise" type="checkbox" />
               Precise: 1,000,000 meets instead of 20,000
             </label>
@@ -129,18 +139,9 @@
             <p class="hint">
               Searches for the openers and jumps with the best chance of
               reaching the goal, or the highest average total without a goal,
-              and fills them in above.
+              keeping under the highest bomb-out chance set for the meet, and
+              fills them in above.
             </p>
-            <label>
-              Highest bomb-out chance (%, optional)
-              <input
-                name="bombOutCapPercent"
-                type="number"
-                min="0"
-                max="100"
-                step="0.5"
-              />
-            </label>
             <div class="actions">
               <button type="button" id="find-plan">Find best plan</button>
               <button type="button" id="cancel-search" hidden>Cancel</button>
