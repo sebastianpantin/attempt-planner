@@ -1,0 +1,32 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 40rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+fieldset {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.5rem 1rem;
+  justify-content: start;
+  align-items: center;
+}
+
+input[type="number"] {
+  width: 6rem;
+}
+
+output {
+  display: block;
+  margin-top: 1rem;
+}
+
+output.problem {
+  color: #c0392b;
+}

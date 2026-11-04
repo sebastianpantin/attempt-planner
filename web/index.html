@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Attempt planner</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Attempt planner</h1>
+      <p>
+        Plan openers and jumps for a meet and see how each plan plays out over
+        thousands of simulated meet days. Work in progress: for now this page
+        only checks a set of attempts against the rules.
+      </p>
+
+      <form id="attempts">
+        <fieldset>
+          <legend>Squat attempts</legend>
+          <label>1st <input name="weight" type="number" value="200" /></label>
+          <label><input name="made" type="checkbox" checked /> made</label>
+          <label>2nd <input name="weight" type="number" value="210" /></label>
+          <label><input name="made" type="checkbox" checked /> made</label>
+          <label>3rd <input name="weight" type="number" value="217.5" /></label>
+          <label><input name="made" type="checkbox" /> made</label>
+        </fieldset>
+        <output id="verdict" aria-live="polite"></output>
+      </form>
+    </main>
+  </body>
+</html>
