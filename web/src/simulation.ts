@@ -3,11 +3,7 @@ import { LatestOnly } from "./latest-only.ts";
 
 export interface Simulation<K extends keyof Jobs> {
   started(request: Jobs[K]["request"]): void;
-  finished(
-    reply: Reply<K>,
-    request: Jobs[K]["request"],
-    elapsedMs: number,
-  ): void;
+  finished(reply: Reply<K>, request: Jobs[K]["request"]): void;
 }
 
 /**
@@ -21,16 +17,13 @@ export function simulationWorker<K extends keyof Jobs>(
   const worker = new Worker(new URL("./worker.ts", import.meta.url), {
     type: "module",
   });
-  let startedAt = 0;
   const runs = new LatestOnly<Jobs[K]["request"]>((request) => {
-    startedAt = performance.now();
     simulation.started(request);
     worker.postMessage({ kind, request });
   });
   const finish = (reply: Reply<K>) => {
-    const elapsedMs = performance.now() - startedAt;
     const request = runs.finish();
-    if (request) simulation.finished(reply, request, elapsedMs);
+    if (request) simulation.finished(reply, request);
   };
 
   worker.addEventListener("message", (event: MessageEvent<Reply<K>>) =>
