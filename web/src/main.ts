@@ -39,6 +39,7 @@ import {
   parsePastMeets,
   today,
 } from "./past-meets.ts";
+import { resultsSummary } from "./results-summary.ts";
 import { startSearch } from "./search-runner.ts";
 import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
@@ -59,6 +60,7 @@ const count = new Intl.NumberFormat("en");
 
 const byId = (id: string) => document.getElementById(id)!;
 const form = byId("plan") as HTMLFormElement;
+const summaryBar = byId("summary-bar");
 const input = (name: InputName | "precise") =>
   form.elements.namedItem(name) as HTMLInputElement;
 
@@ -69,7 +71,7 @@ function liftFieldset(lift: Lift): string {
          aria-label="${name} ${label} (kg)" /> kg`;
   return `
     <fieldset class="lift">
-      <legend>${name}</legend>
+      <legend><h3>${name}</h3></legend>
       <label>Expected max (kg)
         <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5" />
       </label>
@@ -203,7 +205,15 @@ function showEvaluation(
   simulations: number,
 ) {
   byId("evaluation").hidden = !evaluation;
+  summaryBar.hidden = !evaluation;
   if (!evaluation) return;
+  byId("summary-bar-figures").replaceChildren(
+    ...resultsSummary(evaluation).map((figure) => {
+      const span = document.createElement("span");
+      span.textContent = figure;
+      return span;
+    }),
+  );
   const { standardErrors: errors, totalPercentilesKg: totals } = evaluation;
   const goalRows: [string, string][] =
     evaluation.goalProbability === undefined

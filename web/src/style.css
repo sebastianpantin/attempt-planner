@@ -23,6 +23,61 @@ main {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
   }
+
+  .side {
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    box-sizing: border-box;
+    padding: 0.25rem;
+    overflow-y: auto;
+  }
+}
+
+#summary-bar {
+  display: none;
+}
+
+@media (width < 64rem) {
+  html {
+    scroll-padding-bottom: 6rem;
+  }
+
+  main {
+    margin-bottom: 6rem;
+  }
+
+  #summary-bar:not([hidden]) {
+    position: fixed;
+    inset: auto 0 0;
+    display: flex;
+    gap: 0.5rem 1rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.25rem 1rem;
+    border-top: 1px solid var(--muted);
+    background: Canvas;
+  }
+
+  #summary-bar p {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 1rem;
+    margin: 0;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #summary-bar span,
+  #summary-bar a {
+    white-space: nowrap;
+  }
+
+  #summary-bar a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
 
 #results[aria-busy="true"] #evaluation,
@@ -115,8 +170,17 @@ main {
   );
 }
 
-.side h2 {
+.layout h2 {
   margin-top: 0;
+}
+
+#plan > details {
+  margin: 0 0 1rem;
+}
+
+legend h3 {
+  margin: 0;
+  font: inherit;
 }
 
 .side section + section {
