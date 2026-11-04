@@ -58,7 +58,7 @@ const perLift = <T>(value: (lift: Lift) => T): PerLift<T> => ({
   deadlift: value("deadlift"),
 });
 
-/** The lifter and goal for the tradeoff sweep, always at the quick count. */
+/** The lifter, goal and bomb-out cap for the tradeoff sweep, always at the quick count. */
 export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
   const read = (lift: Lift, field: LiftField) => values[inputName(lift, field)];
   return {
@@ -78,6 +78,9 @@ export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
       },
     },
     ...(Number.isNaN(values.goalKg) ? {} : { goalKg: values.goalKg }),
+    ...(Number.isNaN(values.bombOutCapPercent)
+      ? {}
+      : { bombOutCap: values.bombOutCapPercent / 100 }),
     simulations: QUICK_SIMULATIONS,
     seed: SEED,
   };
@@ -88,8 +91,9 @@ export function buildRequest(
   precise: boolean,
 ): EvaluateRequest {
   const read = (lift: Lift, field: LiftField) => values[inputName(lift, field)];
+  const { bombOutCap, ...sweep } = buildTradeoffRequest(values);
   return {
-    ...buildTradeoffRequest(values),
+    ...sweep,
     plans: perLift((lift) => ({
       openerKg: read(lift, "openerKg"),
       second: {
@@ -107,19 +111,9 @@ export function buildRequest(
 
 /** The lifter, goal and current plans for a search, with the bomb-out cap in percent. */
 export function buildSearchRequest(values: FormValues): SearchRequest {
-  const { lifter, plans, goalKg, simulations, seed } = buildRequest(
-    values,
-    false,
-  );
   return {
-    lifter,
-    plans,
-    ...(goalKg === undefined ? {} : { goalKg }),
-    ...(Number.isNaN(values.bombOutCapPercent)
-      ? {}
-      : { bombOutCap: values.bombOutCapPercent / 100 }),
-    simulations,
-    seed,
+    ...buildTradeoffRequest(values),
+    plans: buildRequest(values, false).plans,
   };
 }
 

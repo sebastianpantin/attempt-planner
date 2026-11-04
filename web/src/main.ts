@@ -42,7 +42,11 @@ import {
 import { startSearch } from "./search-runner.ts";
 import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
-import { highlightedPoints, shapeLabel } from "./tradeoff-view.ts";
+import {
+  bestForGoalLabel,
+  highlightedPoints,
+  shapeLabel,
+} from "./tradeoff-view.ts";
 
 const LIFT_NAMES: Record<Lift, string> = {
   squat: "Squat",
@@ -270,6 +274,7 @@ const status = (id: string, text: string) => {
 
 let shownEvaluation: Evaluation | undefined;
 let shownTradeoff: Extract<TradeoffResponse, { kind: "swept" }> | undefined;
+let shownBombOutCap: number | undefined;
 
 function usePlans(plans: TradeoffPoint["plans"]) {
   for (const [name, kg] of planValues(plans)) {
@@ -296,13 +301,15 @@ function showTradeoff() {
     (point) => usePlans(point.plans),
   );
   byId("tradeoff-legend").hidden = bestForGoal === undefined;
+  const bestLabel = bestForGoalLabel(shownBombOutCap);
+  byId("tradeoff-best-label").textContent = bestLabel;
   byId("tradeoff-plans").replaceChildren(
     ...highlightedPoints(points, bestForGoal).map(({ point, bestForGoal }) => {
       const row = document.createElement("tr");
       const heading = document.createElement("th");
       heading.scope = "row";
       heading.textContent = shapeLabel(point.shape);
-      if (bestForGoal) heading.append(" (best for the goal)");
+      if (bestForGoal) heading.append(` (${bestLabel})`);
       row.append(heading);
       row.insertCell().textContent = format.percent(point.bombOutProbability);
       row.insertCell().textContent = format.kg(point.expectedTotalKg);
@@ -357,6 +364,7 @@ const submitTradeoff = simulationWorker("tradeoff", {
   finished(reply, request) {
     byId("tradeoff").removeAttribute("aria-busy");
     shownTradeoff = reply.kind === "swept" ? reply : undefined;
+    shownBombOutCap = request.bombOutCap;
     showTradeoff();
     report(
       "tradeoff-status",

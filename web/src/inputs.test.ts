@@ -131,15 +131,23 @@ it("lists every number input once", () => {
 });
 
 describe("buildTradeoffRequest", () => {
-  it("takes the lifter and goal but no plans, always at the quick count", () => {
+  it("takes the lifter, goal and cap but no plans, always at the quick count", () => {
     const evaluate = buildRequest(EXAMPLE, true);
-    const sweep = buildTradeoffRequest(EXAMPLE);
+    const sweep = buildTradeoffRequest({ ...EXAMPLE, bombOutCapPercent: 5 });
     expect(sweep).toEqual({
       lifter: evaluate.lifter,
       goalKg: evaluate.goalKg,
+      bombOutCap: 0.05,
       simulations: QUICK_SIMULATIONS,
       seed: evaluate.seed,
     });
+  });
+
+  it("leaves the cap out when it is empty, and out of evaluations", () => {
+    expect(
+      buildTradeoffRequest({ ...EXAMPLE, bombOutCapPercent: NaN }),
+    ).not.toHaveProperty("bombOutCap");
+    expect(buildRequest(EXAMPLE, false)).not.toHaveProperty("bombOutCap");
   });
 });
 
