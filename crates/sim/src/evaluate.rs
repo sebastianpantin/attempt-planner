@@ -179,10 +179,11 @@ impl std::error::Error for InputProblem {}
 pub struct LiftSummary {
     /// Chance of at least one made attempt.
     pub make_probability: f64,
-    /// Average best attempt over the meets where at least one attempt was made.
+    /// Median best attempt over the meets where at least one attempt was made, so always a
+    /// weight that can be loaded on the bar.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "tsify", tsify(optional))]
-    pub expected_best_kg: Option<f64>,
+    pub median_best_kg: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -349,32 +350,25 @@ fn plan_problems(plans: &PerLift<LiftPlan>) -> Vec<InputProblem> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct LiftTally {
-    makes: u32,
-    best_grams: u64,
-}
-
 /// Running counts over simulated meets, with a bomb-out recorded as a zero total.
 struct Tally {
     totals: Vec<Weight>,
-    lifts: PerLift<LiftTally>,
+    /// Each lift's best attempt in every meet where it had a make.
+    bests: PerLift<Vec<Weight>>,
 }
 
 impl Tally {
     fn new(simulations: u32) -> Self {
         Self {
             totals: Vec::with_capacity(simulations as usize),
-            lifts: PerLift::from_fn(|_| LiftTally::default()),
+            bests: PerLift::from_fn(|_| Vec::new()),
         }
     }
 
     fn record(&mut self, bests: PerLift<Option<Weight>>) {
         for (lift, best) in bests.iter() {
             if let Some(best) = best {
-                let tally = self.lifts.get_mut(lift);
-                tally.makes += 1;
-                tally.best_grams += u64::from(best.grams());
+                self.bests.get_mut(lift).push(*best);
             }
         }
         let total = bests.iter().map(|(_, best)| *best).sum::<Option<Weight>>();
@@ -383,6 +377,9 @@ impl Tally {
 
     fn finish(mut self, goal: Option<Weight>) -> Evaluation {
         self.totals.sort_unstable();
+        for lift in Lift::ALL {
+            self.bests.get_mut(lift).sort_unstable();
+        }
         let totals = &self.totals;
         let runs = totals.len() as f64;
         let bomb_outs = totals.partition_point(|&t| t == Weight::ZERO);
@@ -398,10 +395,7 @@ impl Tally {
             met as f64 / runs
         });
         let proportion_error = |p: f64| (p * (1.0 - p) / runs).sqrt();
-        let percentile = |quantile: f64| {
-            let rank = (quantile * runs).ceil() as usize;
-            totals[rank.clamp(1, totals.len()) - 1].kg()
-        };
+        let percentile = |quantile: f64| nearest_rank(totals, quantile).kg();
 
         Evaluation {
             bomb_out_probability,
@@ -419,13 +413,18 @@ impl Tally {
                 goal_probability: goal_probability.map(proportion_error),
                 expected_total_kg: (variance / runs).sqrt(),
             },
-            lifts: self.lifts.map(|_, tally| LiftSummary {
-                make_probability: f64::from(tally.makes) / runs,
-                expected_best_kg: (tally.makes > 0)
-                    .then(|| tally.best_grams as f64 / 1000.0 / f64::from(tally.makes)),
+            lifts: self.bests.map(|_, bests| LiftSummary {
+                make_probability: bests.len() as f64 / runs,
+                median_best_kg: (!bests.is_empty()).then(|| nearest_rank(bests, 0.5).kg()),
             }),
         }
     }
+}
+
+/// The nearest-rank quantile of sorted, non-empty weights.
+fn nearest_rank(sorted: &[Weight], quantile: f64) -> Weight {
+    let rank = (quantile * sorted.len() as f64).ceil() as usize;
+    sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
 #[cfg(test)]
@@ -500,9 +499,9 @@ mod tests {
     fn certain_outcome_without_day_form_spread() {
         let result = evaluate(&certain_meet()).unwrap();
         assert_eq!(result.bomb_out_probability, 0.0);
-        assert_eq!(result.lifts.squat.expected_best_kg, Some(190.0));
-        assert_eq!(result.lifts.bench.expected_best_kg, Some(125.0));
-        assert_eq!(result.lifts.deadlift.expected_best_kg, Some(235.0));
+        assert_eq!(result.lifts.squat.median_best_kg, Some(190.0));
+        assert_eq!(result.lifts.bench.median_best_kg, Some(125.0));
+        assert_eq!(result.lifts.deadlift.median_best_kg, Some(235.0));
         assert_eq!(result.expected_total_kg, 550.0);
         assert_eq!(result.expected_total_without_bomb_out_kg, Some(550.0));
         let p = result.total_percentiles_kg;
@@ -532,7 +531,7 @@ mod tests {
         assert_eq!(result.expected_total_kg, 0.0);
         assert_eq!(result.expected_total_without_bomb_out_kg, None);
         assert_eq!(result.lifts.bench.make_probability, 0.0);
-        assert_eq!(result.lifts.bench.expected_best_kg, None);
+        assert_eq!(result.lifts.bench.median_best_kg, None);
         assert_eq!(result.lifts.squat.make_probability, 1.0);
     }
 
@@ -592,6 +591,15 @@ mod tests {
         assert_eq!(first.lifts.bench, second.lifts.bench);
         assert_eq!(first.lifts.deadlift, second.lifts.deadlift);
         assert_eq!(days.evaluate(&meet.plans, None), evaluate(&meet));
+    }
+
+    #[test]
+    fn median_best_is_a_loadable_weight() {
+        let result = evaluate(&uncertain_meet(25.0, 0.04)).unwrap();
+        for (_, lift) in result.lifts.iter() {
+            let best = Weight::from_kg(lift.median_best_kg.unwrap()).unwrap();
+            assert!(best.is_loadable(), "{best}");
+        }
     }
 
     #[test]

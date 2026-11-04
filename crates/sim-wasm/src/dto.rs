@@ -331,7 +331,7 @@ mod tests {
         let evaluation = evaluation(&request());
         assert_eq!(evaluation.expected_total_kg, 550.0);
         assert_eq!(evaluation.goal_probability, Some(1.0));
-        assert_eq!(evaluation.lifts.bench.expected_best_kg, Some(125.0));
+        assert_eq!(evaluation.lifts.bench.median_best_kg, Some(125.0));
         assert_eq!(evaluation.total_percentiles_kg.p50, 550.0);
     }
 

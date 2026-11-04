@@ -42,7 +42,7 @@ fn returns_an_evaluation_with_camel_case_fields() {
     );
     assert!(json.contains(r#""expectedTotalKg":550"#), "{json}");
     assert!(
-        json.contains(r#""bench":{"makeProbability":1,"expectedBestKg":125}"#),
+        json.contains(r#""bench":{"makeProbability":1,"medianBestKg":125}"#),
         "{json}"
     );
 }
