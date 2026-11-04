@@ -239,7 +239,12 @@ pub struct MeetDay {
 impl MeetDay {
     /// Each lift's best made attempt on this day, or `None` for a lift with no make.
     pub fn bests(&self, plans: &PerLift<LiftPlan>) -> PerLift<Option<Weight>> {
-        plans.map(|lift, plan| best_attempt(&plan.attempts(*self.make_thresholds_kg.get(lift))))
+        plans.map(|lift, plan| self.best(lift, plan))
+    }
+
+    /// The best made attempt of one lift on this day, or `None` when it has no make.
+    pub fn best(&self, lift: Lift, plan: &LiftPlan) -> Option<Weight> {
+        best_attempt(&plan.attempts(*self.make_thresholds_kg.get(lift)))
     }
 }
 

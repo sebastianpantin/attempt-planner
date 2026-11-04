@@ -1,7 +1,7 @@
 use crate::rules::{ATTEMPTS_PER_LIFT, Attempt, BAR, HEAVIEST, RuleViolation, Weight};
 
 /// How far to jump for one attempt, depending on whether the previous attempt was made.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Jumps {
     pub after_make: Weight,
     pub after_miss: Weight,
@@ -16,7 +16,7 @@ pub enum PlanStep {
 }
 
 /// The plan for one lift: an opener, then jump rules for the 2nd and 3rd attempts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LiftPlan {
     pub opener: Weight,
     pub second: Jumps,

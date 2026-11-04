@@ -165,7 +165,7 @@ pub enum TradeoffResponse {
         /// Index into `points` of the plan with the best chance of reaching the goal.
         #[serde(skip_serializing_if = "Option::is_none")]
         #[tsify(optional)]
-        best_for_goal: Option<u32>,
+        best_for_goal: Option<usize>,
     },
     Invalid {
         problems: Vec<Problem>,
@@ -177,7 +177,7 @@ pub fn tradeoff(request: &TradeoffRequest) -> TradeoffResponse {
     match to_tradeoff_input(request).and_then(|input| tradeoff::tradeoff(&input)) {
         Ok(result) => TradeoffResponse::Swept {
             points: result.points.into_iter().map(TradeoffPoint::from).collect(),
-            best_for_goal: result.best_for_goal.and_then(|i| u32::try_from(i).ok()),
+            best_for_goal: result.best_for_goal,
         },
         Err(problems) => TradeoffResponse::Invalid {
             problems: problems.into_iter().map(Problem::from).collect(),
@@ -471,7 +471,7 @@ mod tests {
                 third: jumps(10.0, 0.0),
             }
         );
-        let best = &points[best_for_goal.unwrap() as usize];
+        let best = &points[best_for_goal.unwrap()];
         assert!(
             points
                 .iter()

@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::evaluate::{InputProblem, Lifter, MeetDays};
 use crate::lift::PerLift;
 use crate::plan::{Jumps, LiftPlan};
-use crate::rules::{BAR, PLATE_STEP, Weight};
+use crate::rules::{PLATE_STEP, Weight};
 
 const OPENER_PERCENTS: RangeInclusive<u32> = 85..=95;
 const SECOND_PERCENTS: RangeInclusive<u32> = 93..=101;
@@ -23,8 +24,8 @@ pub struct PlanShape {
 
 impl PlanShape {
     /// The plan for a lift with this expected max. Each attempt is its percentage of the
-    /// max, rounded down to the plate step, and a miss repeats the weight. `None` when an
-    /// attempt would be under the bar or no heavier than the attempt before it.
+    /// max, rounded down to the plate step, and a miss repeats the weight. `None` when the
+    /// rounded attempts break the attempt rules.
     pub fn plan(&self, expected_max: Weight) -> Option<LiftPlan> {
         let step = u64::from(PLATE_STEP.grams());
         let at = |percent: u32| {
@@ -36,17 +37,16 @@ impl PlanShape {
         let opener = at(self.opener_percent)?;
         let second = at(self.second_percent)?;
         let third = at(self.third_percent)?;
-        if opener < BAR || second <= opener || third <= second {
-            return None;
-        }
-        let jump = |from: Weight, to: Weight| Jumps {
-            after_make: Weight::from_grams(to.grams() - from.grams()),
-            after_miss: Weight::ZERO,
+        let jump = |from: Weight, to: Weight| {
+            Some(Jumps {
+                after_make: Weight::from_grams(to.grams().checked_sub(from.grams())?),
+                after_miss: Weight::ZERO,
+            })
         };
         let plan = LiftPlan {
             opener,
-            second: jump(opener, second),
-            third: jump(second, third),
+            second: jump(opener, second)?,
+            third: jump(second, third)?,
         };
         plan.problems().is_empty().then_some(plan)
     }
@@ -104,9 +104,11 @@ struct ShapeTally {
 }
 
 /// Scores every shape in the family that fits the lifter's maxes on the same simulated
-/// meet days, so the differences between shapes are not noise.
+/// meet days, so the differences between shapes are not noise. Shapes that round to the
+/// same plans as an earlier shape are left out.
 pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
     let days = MeetDays::new(input.lifter, input.simulations, input.seed)?;
+    let mut seen = HashSet::new();
     let candidates: Vec<(PlanShape, PerLift<LiftPlan>)> = plan_family()
         .filter_map(|shape| {
             let plan = |lift: &crate::evaluate::LiftModel| shape.plan(lift.expected_max);
@@ -118,12 +120,45 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
             };
             Some((shape, plans))
         })
+        .filter(|(_, plans)| seen.insert(*plans))
         .collect();
 
+    // Each lift has far fewer distinct plans than there are shapes, so every day scores
+    // each distinct lift plan once and the shapes add up those results.
+    let lift_plans: PerLift<Vec<LiftPlan>> = PerLift::from_fn(|lift| {
+        let mut seen = HashSet::new();
+        candidates
+            .iter()
+            .map(|(_, plans)| *plans.get(lift))
+            .filter(|plan| seen.insert(*plan))
+            .collect()
+    });
+    let plan_indices: Vec<PerLift<usize>> = candidates
+        .iter()
+        .map(|(_, plans)| {
+            plans.map(|lift, plan| {
+                lift_plans
+                    .get(lift)
+                    .iter()
+                    .position(|p| p == plan)
+                    .expect("every candidate plan is listed")
+            })
+        })
+        .collect();
+
+    let mut bests: PerLift<Vec<Option<Weight>>> = PerLift::from_fn(|_| Vec::new());
     let mut tallies = vec![ShapeTally::default(); candidates.len()];
     for day in days.iter() {
-        for ((_, plans), tally) in candidates.iter().zip(&mut tallies) {
-            let total: Option<Weight> = day.bests(plans).iter().map(|(_, best)| *best).sum();
+        for (lift, plans) in lift_plans.iter() {
+            let lift_bests = bests.get_mut(lift);
+            lift_bests.clear();
+            lift_bests.extend(plans.iter().map(|plan| day.best(lift, plan)));
+        }
+        for (indices, tally) in plan_indices.iter().zip(&mut tallies) {
+            let total: Option<Weight> = indices
+                .iter()
+                .map(|(lift, &index)| bests.get(lift)[index])
+                .sum();
             match total {
                 None => tally.bomb_outs += 1,
                 Some(total) => {
@@ -282,22 +317,28 @@ mod tests {
     }
 
     #[test]
-    fn points_cover_the_shapes_that_fit_every_lift() {
+    fn points_cover_each_distinct_plan_that_fits_every_lift_once() {
         let input = input(None);
         let points = tradeoff(&input).unwrap().points;
-        for shape in plan_family() {
-            let fits = input
-                .lifter
-                .lifts
-                .iter()
-                .all(|(_, lift)| shape.plan(lift.expected_max).is_some());
-            assert_eq!(points.iter().any(|p| p.shape == shape), fits, "{shape:?}");
+        let plans_for = |shape: PlanShape| {
+            let lifts = &input.lifter.lifts;
+            Some(PerLift {
+                squat: shape.plan(lifts.squat.expected_max)?,
+                bench: shape.plan(lifts.bench.expected_max)?,
+                deadlift: shape.plan(lifts.deadlift.expected_max)?,
+            })
+        };
+        let fitting: HashSet<_> = plan_family().filter_map(plans_for).collect();
+        let swept: Vec<_> = points.iter().map(|p| p.plans).collect();
+        assert_eq!(swept.len(), fitting.len());
+        assert_eq!(swept.iter().copied().collect::<HashSet<_>>(), fitting);
+        for point in &points {
+            assert_eq!(plans_for(point.shape), Some(point.plans));
         }
-        assert!(points.len() > 500);
     }
 
     #[test]
-    fn no_plan_beats_a_frontier_plan_on_both_counts() {
+    fn the_frontier_is_exactly_the_plans_no_other_plan_beats() {
         let points = tradeoff(&input(None)).unwrap().points;
         let beats = |a: &TradeoffPoint, b: &TradeoffPoint| {
             a.bomb_out_probability <= b.bomb_out_probability
@@ -309,17 +350,7 @@ mod tests {
         assert!(frontier.len() > 1);
         for point in &points {
             let beaten = points.iter().any(|other| beats(other, point));
-            if point.on_frontier {
-                assert!(!beaten);
-            } else {
-                assert!(
-                    beaten
-                        || frontier
-                            .iter()
-                            .any(|f| f.bomb_out_probability == point.bomb_out_probability
-                                && f.expected_total_kg == point.expected_total_kg)
-                );
-            }
+            assert_eq!(point.on_frontier, !beaten, "{point:?}");
         }
     }
 
