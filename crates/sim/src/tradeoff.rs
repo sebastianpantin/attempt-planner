@@ -3,6 +3,7 @@ use std::ops::RangeInclusive;
 
 use crate::evaluate::{InputProblem, Lifter, MeetDays};
 use crate::lift::PerLift;
+use crate::outcome::OutcomeTally;
 use crate::plan::{Jumps, LiftPlan};
 use crate::rules::{PLATE_STEP, Weight};
 
@@ -96,13 +97,6 @@ pub struct Tradeoff {
     pub best_for_goal: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ShapeTally {
-    bomb_outs: u32,
-    total_grams: u64,
-    goals_met: u32,
-}
-
 /// Scores every shape in the family that fits the lifter's maxes on the same simulated
 /// meet days, so the differences between shapes are not noise. Shapes that round to the
 /// same plans as an earlier shape are left out.
@@ -147,7 +141,7 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
         .collect();
 
     let mut bests: PerLift<Vec<Option<Weight>>> = PerLift::from_fn(|_| Vec::new());
-    let mut tallies = vec![ShapeTally::default(); candidates.len()];
+    let mut tallies = vec![OutcomeTally::default(); candidates.len()];
     for day in days.iter() {
         for (lift, plans) in lift_plans.iter() {
             let lift_bests = bests.get_mut(lift);
@@ -159,27 +153,23 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
                 .iter()
                 .map(|(lift, &index)| bests.get(lift)[index])
                 .sum();
-            match total {
-                None => tally.bomb_outs += 1,
-                Some(total) => {
-                    tally.total_grams += u64::from(total.grams());
-                    tally.goals_met += u32::from(input.goal.is_some_and(|goal| total >= goal));
-                }
-            }
+            tally.record(total, input.goal);
         }
     }
 
-    let runs = f64::from(input.simulations);
     let mut points: Vec<TradeoffPoint> = candidates
         .into_iter()
         .zip(tallies)
-        .map(|((shape, plans), tally)| TradeoffPoint {
-            shape,
-            plans,
-            bomb_out_probability: f64::from(tally.bomb_outs) / runs,
-            expected_total_kg: tally.total_grams as f64 / 1000.0 / runs,
-            goal_probability: input.goal.map(|_| f64::from(tally.goals_met) / runs),
-            on_frontier: false,
+        .map(|((shape, plans), tally)| {
+            let outcome = tally.outcome(input.goal);
+            TradeoffPoint {
+                shape,
+                plans,
+                bomb_out_probability: outcome.bomb_out_probability,
+                expected_total_kg: outcome.expected_total_kg,
+                goal_probability: outcome.goal_probability,
+                on_frontier: false,
+            }
         })
         .collect();
     mark_frontier(&mut points);

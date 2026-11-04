@@ -47,6 +47,7 @@ pub enum InputField {
     DayForm,
     Simulations,
     Goal,
+    BombOutCap,
 }
 
 impl From<PlanStep> for InputField {
@@ -76,6 +77,7 @@ pub enum ProblemCode {
     InvalidCurve,
     InvalidDayForm,
     SimulationsOutOfRange,
+    InvalidBombOutCap,
 }
 
 impl From<RuleViolation> for ProblemCode {
@@ -111,6 +113,8 @@ pub enum InputProblem {
     },
     InvalidDayForm,
     SimulationsOutOfRange,
+    /// A bomb-out cap that is not a probability between 0 and 1.
+    InvalidBombOutCap,
 }
 
 impl InputProblem {
@@ -120,7 +124,7 @@ impl InputProblem {
             Self::Plan { lift, .. }
             | Self::ExpectedMaxBelowBar { lift }
             | Self::InvalidCurve { lift } => Some(lift),
-            Self::InvalidDayForm | Self::SimulationsOutOfRange => None,
+            Self::InvalidDayForm | Self::SimulationsOutOfRange | Self::InvalidBombOutCap => None,
         }
     }
 
@@ -132,6 +136,7 @@ impl InputProblem {
             Self::InvalidCurve { .. } => InputField::Curve,
             Self::InvalidDayForm => InputField::DayForm,
             Self::SimulationsOutOfRange => InputField::Simulations,
+            Self::InvalidBombOutCap => InputField::BombOutCap,
         }
     }
 
@@ -143,6 +148,7 @@ impl InputProblem {
             Self::InvalidCurve { .. } => ProblemCode::InvalidCurve,
             Self::InvalidDayForm => ProblemCode::InvalidDayForm,
             Self::SimulationsOutOfRange => ProblemCode::SimulationsOutOfRange,
+            Self::InvalidBombOutCap => ProblemCode::InvalidBombOutCap,
         }
     }
 }
@@ -166,6 +172,7 @@ impl fmt::Display for InputProblem {
             Self::SimulationsOutOfRange => {
                 write!(f, "simulations must be between 1 and {MAX_SIMULATIONS}")
             }
+            Self::InvalidBombOutCap => f.write_str("bomb-out cap must be a chance between 0 and 1"),
         }
     }
 }
