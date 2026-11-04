@@ -1,0 +1,15 @@
+[package]
+name = "attempt-sim-wasm"
+description = "WebAssembly bindings for attempt-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+attempt-sim = { path = "../sim" }
+wasm-bindgen = "0.2.130"

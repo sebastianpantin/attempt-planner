@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["crates/sim", "crates/sim-wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Sebastian P Liljevall"]
+repository = "https://github.com/sebastianpantin/attempt-planner"
+
+[profile.release]
+lto = true
+codegen-units = 1
