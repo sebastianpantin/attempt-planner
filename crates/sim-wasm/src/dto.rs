@@ -351,6 +351,7 @@ mod tests {
             curve: MakeRateCurve {
                 ratio_at_half: 1.0,
                 steepness: 1_000.0,
+                technical_miss_chance: 0.0,
             },
         };
         let plan = |opener_kg, second, third| LiftPlanKg {

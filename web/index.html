@@ -82,7 +82,8 @@
               <p class="hint">
                 The chance of making an attempt falls along a logistic curve as
                 the load nears the day's max. The midpoint is the load ÷ day max
-                ratio with a 50% make rate.
+                ratio with a 50% make rate. A technical miss, such as a depth
+                call or a missed command, can happen at any load.
               </p>
               <div id="curves"></div>
             </fieldset>
@@ -104,6 +105,8 @@
                     <th scope="col">Lift</th>
                     <th scope="col">At least one make</th>
                     <th scope="col">Median best</th>
+                    <th scope="col">Missed for strength</th>
+                    <th scope="col">Missed for technique</th>
                   </tr>
                 </thead>
                 <tbody id="lift-results"></tbody>

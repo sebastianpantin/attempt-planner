@@ -110,6 +110,7 @@ mod tests {
     const SHARP: MakeRateCurve = MakeRateCurve {
         ratio_at_half: 1.0,
         steepness: 1_000.0,
+        technical_miss_chance: 0.0,
     };
 
     #[test]
@@ -130,6 +131,7 @@ mod tests {
         let curve = MakeRateCurve {
             ratio_at_half: 1.0,
             steepness: 20.0,
+            technical_miss_chance: 0.0,
         };
         let attempts = plan().attempts(thresholds(&curve, 180.0, [0.4, 0.6, 0.0]));
         assert_eq!(attempts, [made(180.0), missed(190.0), made(192.5)]);
