@@ -149,7 +149,7 @@
 
 .analytics .hbar {
   display: grid;
-  grid-template-columns: 70px 1fr 52px;
+  grid-template-columns: 70px 1fr 80px;
   gap: 8px;
   align-items: center;
   font-size: 0.85rem;
@@ -179,7 +179,7 @@
   background: var(--card);
   color: var(--ink);
   border-radius: 999px;
-  min-height: 36px;
+  min-height: 44px;
   padding: 6px 14px;
   font: inherit;
   font-size: 0.85rem;
@@ -216,6 +216,8 @@
 }
 
 .analytics .attempt-rates span {
+  display: block;
+  line-height: 1.3;
   font-size: 0.75rem;
   color: var(--muted);
 }
@@ -290,7 +292,7 @@
   background: var(--accent-soft);
   color: var(--accent);
   border-radius: 8px;
-  min-height: 36px;
+  min-height: 44px;
   padding: 6px 12px;
   font: inherit;
   font-size: 0.82rem;
@@ -298,7 +300,17 @@
   cursor: pointer;
 }
 
-@media (max-width: 900px) {
+.analytics .applied {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--make);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+@media (max-width: 719px) {
   .analytics {
     grid-template-columns: minmax(0, 1fr);
   }

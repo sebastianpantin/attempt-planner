@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { PlanShape, TradeoffPoint } from "../pkg/attempt_sim_wasm.js";
 import {
   bestForGoalLabel,
+  comparisonRows,
   highlightedPoints,
   noGoalPickNote,
+  planLines,
+  plannedAttempts,
   riskAxis,
   shapeLabel,
 } from "./tradeoff-view.ts";
@@ -80,9 +83,86 @@ describe("riskAxis", () => {
 
 it("explains a missing best plan only when the cap ruled every plan out", () => {
   expect(noGoalPickNote(550, 0.05, undefined)).toBe(
-    "No plan in the family keeps the bomb-out chance within 5%, so none is marked best for the goal. Raise the highest bomb-out chance to see one.",
+    "No plan in the family keeps the bomb-out chance within 5%, so none is marked best for the goal. Raise the highest bomb-out chance in step 1 to see one.",
   );
   expect(noGoalPickNote(550, 0.05, 3)).toBe("");
   expect(noGoalPickNote(undefined, 0.05, undefined)).toBe("");
   expect(noGoalPickNote(550, undefined, undefined)).toBe("");
+});
+
+describe("comparisonRows", () => {
+  const plan = (risk: number, totalKg: number, goal?: number) => ({
+    ...point(80, risk, false),
+    expectedTotalKg: totalKg,
+    ...(goal === undefined ? {} : { goalProbability: goal }),
+  });
+
+  it("picks the plan with the highest average total in each risk band", () => {
+    const points = [
+      plan(0.0005, 540),
+      plan(0.004, 545),
+      plan(0.009, 552),
+      plan(0.015, 556),
+      plan(0.018, 550),
+      plan(0.04, 530),
+      plan(0.09, 520),
+      plan(0.2, 571),
+    ];
+    expect(
+      comparisonRows(points, undefined).map((row) => [
+        row.label,
+        row.point.bombOutProbability,
+      ]),
+    ).toEqual([
+      ["Up to 0.5% bomb-out", 0.004],
+      ["0.5% to 1% bomb-out", 0.009],
+      ["1% to 2% bomb-out", 0.015],
+      ["2% to 5% bomb-out", 0.04],
+      ["5% to 10% bomb-out", 0.09],
+    ]);
+  });
+
+  it("picks by the chance of the goal when there is one, and skips empty bands", () => {
+    const points = [plan(0.001, 560, 0.4), plan(0.002, 550, 0.6)];
+    expect(comparisonRows(points, undefined).map((row) => row.point)).toEqual([
+      points[1],
+    ]);
+  });
+
+  it("marks the best plan for the goal, adding it when no band picked it", () => {
+    const points = [plan(0.001, 550, 0.4), plan(0.003, 549, 0.3)];
+    expect(
+      comparisonRows(points, 1).map((row) => [row.label, row.bestForGoal]),
+    ).toEqual([
+      ["Up to 0.5% bomb-out", false],
+      ["Best for the goal", true],
+    ]);
+    expect(
+      comparisonRows(points, 0).map((row) => [row.label, row.bestForGoal]),
+    ).toEqual([["Up to 0.5% bomb-out", true]]);
+  });
+
+  it("has no rows without plans", () => {
+    expect(comparisonRows([], undefined)).toEqual([]);
+  });
+});
+
+describe("planned attempts", () => {
+  const plan = {
+    openerKg: 182.5,
+    second: { afterMakeKg: 12.5, afterMissKg: 0 },
+    third: { afterMakeKg: 7.5, afterMissKg: 0 },
+  };
+
+  it("lists the attempts after makes without a needless .0", () => {
+    expect(plannedAttempts(plan)).toBe("182.5 / 195 / 202.5");
+  });
+
+  it("gives one line per lift", () => {
+    expect(planLines({ squat: plan, bench: plan, deadlift: plan })).toEqual([
+      "Squat 182.5 / 195 / 202.5",
+      "Bench 182.5 / 195 / 202.5",
+      "Deadlift 182.5 / 195 / 202.5",
+    ]);
+  });
 });

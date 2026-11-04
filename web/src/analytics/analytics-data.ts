@@ -9,7 +9,14 @@ import type {
   Setting,
   TotalShare,
 } from "../../pkg/attempt_sim_wasm.js";
-import { kg, LIFT_NAMES, percent, roundChanceUp } from "../format.ts";
+import { attemptTree } from "../attempt-tree.ts";
+import {
+  shortKg as kg,
+  LIFT_NAMES,
+  percent,
+  roundChanceUp,
+  weight,
+} from "../format.ts";
 import { LIFTS } from "../inputs.ts";
 import type { KnownGoal } from "../outcome.ts";
 
@@ -100,7 +107,7 @@ export const chanceOfAtLeast = (totals: TotalShare[], totalKg: number) =>
     .filter((total) => total.totalKg >= totalKg)
     .reduce((sum, total) => sum + total.share, 0);
 
-/** A total and the chance of reaching it, "560.0 kg: 48.2%". */
+/** A total and the chance of reaching it, "560 kg: 48.2%". */
 export const totalCheck = (totals: TotalShare[], totalKg: number) =>
   `${kg(totalKg)}: ${percent(chanceOfAtLeast(totals, totalKg))}`;
 
@@ -154,11 +161,15 @@ export interface BombOutRisk {
   lifts: LiftRisk[];
   /** The end of a shared scale for the bars, a round chance at or above every lift's. */
   scaleMax: number;
+  /** Why the lifts' chances add up to more than the meet's, when they do. */
+  overlap: string;
   hint: string;
 }
 
-/** The share of the summed risk from which one lift carries most of it. */
+/** The share of the meet's bomb-out chance from which one lift carries most of it. */
 const MOST_OF_THE_RISK = 0.5;
+/** A meet bomb-out chance below this is rare enough to need no lift named or fixed. */
+const WORTH_FIXING = 0.01;
 
 function riskAdvice({ lift, technical, tooHeavy }: LiftRisk): string {
   return tooHeavy >= technical
@@ -167,10 +178,14 @@ function riskAdvice({ lift, technical, tooHeavy }: LiftRisk): string {
 }
 
 /**
- * Each lift's bomb-out chance split by cause, and a line naming the riskiest lift, with
- * advice when it carries most of the risk.
+ * Each lift's own chance of missing all three attempts, split by cause; why they can add
+ * up to more than the meet's bomb-out chance; and, unless bomb-outs are rare, a line naming
+ * the riskiest lift, with advice when that lift makes up most of the meet's chance.
  */
-export function bombOutRisk(lifts: PerLift<LiftSummary>): BombOutRisk {
+export function bombOutRisk(
+  lifts: PerLift<LiftSummary>,
+  bombOutProbability: number,
+): BombOutRisk {
   const risks = LIFTS.map((lift): LiftRisk => {
     const total = 1 - lifts[lift].makeProbability;
     const technical = Math.min(lifts[lift].technicalBombOutProbability, total);
@@ -178,17 +193,25 @@ export function bombOutRisk(lifts: PerLift<LiftSummary>): BombOutRisk {
   });
   const summed = risks.reduce((sum, risk) => sum + risk.total, 0);
   const riskiest = risks.reduce((a, b) => (b.total > a.total ? b : a));
-  const share = riskiest.total / summed;
+  const name = LIFT_NAMES[riskiest.lift].full;
   return {
     lifts: risks,
     scaleMax: roundChanceUp(Math.max(riskiest.total, 0.01)),
+    overlap:
+      percent(summed) === percent(bombOutProbability)
+        ? ""
+        : `One meet can bomb out on two lifts, so these add up to ${percent(summed)}, more than your ${percent(bombOutProbability)} chance of bombing out.`,
     hint:
       summed === 0
         ? "No lift bombed out in the simulated meets."
-        : [
-            `${LIFT_NAMES[riskiest.lift].full} carries ${percent(share)} of the bomb-out risk.`,
-            ...(share >= MOST_OF_THE_RISK ? [riskAdvice(riskiest)] : []),
-          ].join(" "),
+        : bombOutProbability < WORTH_FIXING
+          ? `Bomb-outs are rare with this plan: ${percent(bombOutProbability)} of meets.`
+          : [
+              `${name} is the riskiest lift: it bombs out in ${percent(riskiest.total)} of meets, against ${percent(bombOutProbability)} for the meet as a whole.`,
+              ...(riskiest.total >= MOST_OF_THE_RISK * bombOutProbability
+                ? [riskAdvice(riskiest)]
+                : []),
+            ].join(" "),
   };
 }
 
@@ -197,6 +220,34 @@ export interface PathRow {
   bestKg?: number;
   share: number;
 }
+
+/** The weights a path's attempts were taken at, empty while the plan is unknown. */
+export function pathWeights(plan: LiftPlanKg | undefined, made: boolean[]) {
+  const weights: number[] = [];
+  let node = plan && attemptTree(plan);
+  for (const [index, wasMade] of made.entries()) {
+    if (!node) return [];
+    weights[index] = node.weightKg;
+    node = wasMade ? node.afterMake : node.afterMiss;
+  }
+  return weights;
+}
+
+/** A path's weights, "182.5 → 195 → 202.5 kg", or its best lift while the plan is unknown. */
+export function pathText(row: PathRow, plan?: LiftPlanKg): string {
+  const weights = pathWeights(plan, row.made);
+  if (weights.length > 0) {
+    return `${weights.map(weight).join(" → ")} kg`;
+  }
+  return row.bestKg === undefined ? "no lift" : `best ${kg(row.bestKg)}`;
+}
+
+/** The labels of the make-chance cards: a later attempt counts at whatever weight it is. */
+export const MAKE_CHANCE_LABELS = [
+  "1st attempt made",
+  "2nd attempt made (any weight)",
+  "3rd attempt made (any weight)",
+];
 
 export interface AttemptView {
   makeChances: number[];
@@ -235,6 +286,10 @@ export function dayView(evaluation: Evaluation): DayView {
   return { badKg: p10, normalKg: p50, goodKg: p90, bestPossibleKg };
 }
 
+/** "Applied: …", then "Simulating…" until the results with the change are in. */
+export const appliedLine = (change: string, done: boolean) =>
+  `Applied: ${change}. ${done ? "Results updated." : "Simulating…"}`;
+
 /** Each setting's attempt, when it applies and its weight in a plan. */
 const SETTINGS: Record<
   Setting,
@@ -263,12 +318,19 @@ const SETTINGS: Record<
   },
 };
 
-/** A change in words, such as "Bench press 3rd: +5.0 kg instead of +7.5 kg after a make". */
+/** A jump in words, "+5 kg", or "repeat the weight" for none. */
+const jumpText = (jumpKg: number) =>
+  jumpKg === 0 ? "repeat the weight" : `${jumpKg > 0 ? "+" : ""}${kg(jumpKg)}`;
+
+/**
+ * A change in words, such as "Bench press 3rd after a make: +5 kg instead of +7.5 kg". A
+ * 2nd or 3rd attempt is a jump from the attempt before.
+ */
 export function describeChange(change: Change, current: PlanOutcome): string {
   const { attempt, after, kg: settingKg } = SETTINGS[change.setting];
-  const sign = change.setting === "opener" ? "" : "+";
+  const show = change.setting === "opener" ? kg : jumpText;
   const before = settingKg(current.plans[change.lift]);
-  return `${LIFT_NAMES[change.lift].full} ${attempt}: ${sign}${kg(change.weightKg)} instead of ${sign}${kg(before)}${after}`;
+  return `${LIFT_NAMES[change.lift].full} ${attempt}${after}: ${show(change.weightKg)} instead of ${show(before)}`;
 }
 
 /** Changes in chance smaller than one shown decimal read as no change. */

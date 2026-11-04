@@ -6,6 +6,7 @@ import { select } from "d3-selection";
 import { line, symbol, symbolCross } from "d3-shape";
 import * as format from "./format.ts";
 import { highlightedPoints, riskAxis, shapeLabel } from "./tradeoff-view.ts";
+import "./tradeoff.css";
 
 export interface ChartData {
   points: TradeoffPoint[];
@@ -14,9 +15,11 @@ export interface ChartData {
     Pick<Evaluation, "bombOutProbability" | "expectedTotalKg"> | undefined;
 }
 
-const WIDTH = 560;
+/** The chart's width follows its box within these, so its text stays near its CSS size. */
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 640;
 const HEIGHT = 340;
-const MARGIN = { top: 16, right: 16, bottom: 48, left: 64 };
+const MARGIN = { top: 16, right: 16, bottom: 52, left: 64 };
 
 export const goalColour = scaleSequential(interpolateViridis).domain([0, 1]);
 
@@ -24,24 +27,40 @@ export const describePoint = (point: TradeoffPoint) =>
   [
     shapeLabel(point.shape),
     `bomb-out ${format.percent(point.bombOutProbability)}`,
-    `average total ${format.kg(point.expectedTotalKg)}`,
+    `average total ${format.shortKg(point.expectedTotalKg)}`,
     ...(point.goalProbability === undefined
       ? []
-      : [`goal ${format.percent(point.goalProbability)}`]),
+      : [`chance of goal ${format.percent(point.goalProbability)}`]),
   ].join(", ");
+
+/** Each chart's latest drawing, redrawn when the chart's width changes. */
+const redraws = new WeakMap<Element, { width: number; draw: () => void }>();
+const resized = new ResizeObserver((entries) => {
+  for (const { target } of entries) {
+    const drawn = redraws.get(target);
+    if (drawn && drawn.width !== chartWidth(target)) drawn.draw();
+  }
+});
+
+const chartWidth = (svg: Element) =>
+  Math.min(Math.max(svg.clientWidth || MAX_WIDTH, MIN_WIDTH), MAX_WIDTH);
 
 export function drawTradeoff(
   svg: SVGSVGElement,
-  { points, bestForGoal, current }: ChartData,
+  data: ChartData,
   pick: (point: TradeoffPoint) => void,
 ) {
+  const { points, bestForGoal, current } = data;
+  const width = chartWidth(svg);
+  redraws.set(svg, { width, draw: () => drawTradeoff(svg, data, pick) });
+  resized.observe(svg);
   const shown = [...points, ...(current ? [current] : [])];
   const risks = shown.map((p) => p.bombOutProbability);
   const totals = shown.map((p) => p.expectedTotalKg);
   const risk = riskAxis(Math.max(...risks));
   const x = scaleSqrt()
     .domain([0, risk.max])
-    .range([MARGIN.left, WIDTH - MARGIN.right]);
+    .range([MARGIN.left, width - MARGIN.right]);
   const y = scaleLinear()
     .domain([Math.min(...totals) - 2.5, Math.max(...totals) + 2.5])
     .nice()
@@ -49,9 +68,19 @@ export function drawTradeoff(
   const at = (p: { bombOutProbability: number; expectedTotalKg: number }) =>
     `translate(${x(p.bombOutProbability)},${y(p.expectedTotalKg)})`;
 
-  const root = select(svg).attr("viewBox", `0 0 ${WIDTH} ${HEIGHT}`);
+  const root = select(svg).attr("viewBox", `0 0 ${width} ${HEIGHT}`);
   root.selectChildren().remove();
 
+  root
+    .append("g")
+    .attr("class", "grid")
+    .attr("transform", `translate(0,${MARGIN.top})`)
+    .call(
+      axisBottom(x)
+        .tickValues(risk.ticks)
+        .tickSize(HEIGHT - MARGIN.top - MARGIN.bottom)
+        .tickFormat(() => ""),
+    );
   root
     .append("g")
     .attr("transform", `translate(0,${HEIGHT - MARGIN.bottom})`)
@@ -66,15 +95,15 @@ export function drawTradeoff(
     .call(
       axisLeft(y)
         .ticks(6)
-        .tickFormat((value) => format.kg(Number(value))),
+        .tickFormat((value) => format.shortKg(Number(value))),
     );
   root
     .append("text")
     .attr("class", "axis-label")
-    .attr("x", (MARGIN.left + WIDTH - MARGIN.right) / 2)
+    .attr("x", (MARGIN.left + width - MARGIN.right) / 2)
     .attr("y", HEIGHT - 8)
     .attr("text-anchor", "middle")
-    .text("Chance of bombing out");
+    .text("Chance of bombing out (square-root scale)");
   root
     .append("text")
     .attr("class", "axis-label")
@@ -83,8 +112,10 @@ export function drawTradeoff(
       `translate(14,${(MARGIN.top + HEIGHT - MARGIN.bottom) / 2}) rotate(-90)`,
     )
     .attr("text-anchor", "middle")
-    .text("Average total");
+    .text("Average total (bomb-outs count as 0)");
 
+  const fill = (p: TradeoffPoint) =>
+    p.goalProbability === undefined ? null : goalColour(p.goalProbability);
   root
     .append("g")
     .attr("class", "family")
@@ -92,7 +123,8 @@ export function drawTradeoff(
     .data(points.filter((p) => !p.onFrontier))
     .join("circle")
     .attr("transform", at)
-    .attr("r", 2.5);
+    .attr("r", 2.5)
+    .style("fill", fill);
 
   const highlighted = highlightedPoints(points, bestForGoal);
   const frontier = highlighted
@@ -125,9 +157,7 @@ export function drawTradeoff(
     .join("circle")
     .attr("transform", at)
     .attr("r", 4.5)
-    .attr("fill", (p) =>
-      p.goalProbability === undefined ? null : goalColour(p.goalProbability),
-    )
+    .attr("fill", fill)
     .on("click", (_, p) => pick(p))
     .append("title")
     .text((p) => `${describePoint(p)}. Click to use this plan.`);

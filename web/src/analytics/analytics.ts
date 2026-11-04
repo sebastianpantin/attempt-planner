@@ -10,10 +10,11 @@ import { scaleLinear } from "d3-scale";
 import { select, type Selection } from "d3-selection";
 import { curveStepBefore, line } from "d3-shape";
 import { element } from "../dom.ts";
-import { kg, LIFT_NAMES, percent } from "../format.ts";
+import { shortKg as kg, LIFT_NAMES, percent } from "../format.ts";
 import { LIFTS } from "../inputs.ts";
 import { type KnownGoal, knownGoal } from "../outcome.ts";
 import {
+  appliedLine,
   attemptView,
   bombOutRisk,
   chanceOfAtLeast,
@@ -21,6 +22,8 @@ import {
   histogram,
   histogramLabel,
   labelEvery,
+  MAKE_CHANCE_LABELS,
+  pathText,
   reachCurve,
   reachLabel,
   totalCheck,
@@ -43,9 +46,18 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 let shownLift: Lift = "squat";
 /** The total last checked on the reach curve, kept across renders. */
 let checkedTotalKg: number | undefined;
+/** The what-if last applied, confirmed in its panel while that line keeps focus. */
+let applied: string | undefined;
 
-/** Fills `root` with the plan analytics panels, replacing what was there. */
+/**
+ * Fills `root` with the plan analytics panels, replacing what was there. A focused
+ * confirmation of an applied what-if keeps focus through the re-render.
+ */
 export function renderAnalytics(root: HTMLElement, data: AnalyticsData) {
+  const confirmationFocused =
+    document.activeElement?.classList.contains("applied") &&
+    root.contains(document.activeElement);
+  if (!confirmationFocused) applied = undefined;
   const { evaluation } = data;
   const goal = knownGoal(evaluation, data.goalKg);
   const container = element("div", "analytics");
@@ -67,11 +79,12 @@ export function renderAnalytics(root: HTMLElement, data: AnalyticsData) {
     ]),
     reachPanel(evaluation, goal),
     riskPanel(evaluation),
-    attemptPanel(evaluation),
+    attemptPanel(evaluation, data.changes?.current.plans),
     dayPanel(evaluation),
     whatIfPanel(data),
   );
   root.replaceChildren(container);
+  if (confirmationFocused) root.querySelector<HTMLElement>(".applied")?.focus();
 }
 
 function panel(title: string, wide: boolean, children: Node[]) {
@@ -324,11 +337,15 @@ function reachPanel(evaluation: Evaluation, goal?: KnownGoal) {
     ),
     chart,
     label,
+    sub("The higher the total, the fewer meets reach it."),
   ]);
 }
 
 function riskPanel(evaluation: Evaluation) {
-  const { lifts, scaleMax, hint } = bombOutRisk(evaluation.lifts);
+  const { lifts, scaleMax, overlap, hint } = bombOutRisk(
+    evaluation.lifts,
+    evaluation.bombOutProbability,
+  );
   const rows = lifts.map((risk) => {
     const row = element("div", "hbar");
     const track = element("div", "track");
@@ -350,18 +367,20 @@ function riskPanel(evaluation: Evaluation) {
   });
   return panel("Where the bomb-out risk comes from", false, [
     sub(
-      `Chance of missing all three attempts, by lift and cause. Bars run to ${percent(scaleMax)}.`,
+      "A bomb-out is missing all three attempts on one lift: the meet ends with no total.",
+    ),
+    sub(
+      `Each bar is one lift's own chance of a bomb-out, by cause. Bars run to ${percent(scaleMax)}.`,
     ),
     ...rows,
     legend([
       ["too heavy on the day", "heavy"],
       ["technical miss", "technical"],
     ]),
+    ...(overlap ? [sub(overlap)] : []),
     sub(hint),
   ]);
 }
-
-const ORDINALS = ["1st", "2nd", "3rd"];
 
 function marks(made: boolean[], rest = "") {
   const node = element("span", "marks");
@@ -379,7 +398,7 @@ function marks(made: boolean[], rest = "") {
   return node;
 }
 
-function attemptPanel(evaluation: Evaluation) {
+function attemptPanel(evaluation: Evaluation, plans?: PerLift<LiftPlanKg>) {
   const body = element("div", "attempt-body");
   const tabs = element("div", "tabs");
   tabs.setAttribute("role", "group");
@@ -395,7 +414,7 @@ function attemptPanel(evaluation: Evaluation) {
       const rate = element("div");
       rate.append(
         element("b", "", percent(chance)),
-        element("span", "", `${ORDINALS[index]} made`),
+        element("span", "", MAKE_CHANCE_LABELS[index]),
       );
       rates.append(rate);
     });
@@ -410,17 +429,11 @@ function attemptPanel(evaluation: Evaluation) {
       row.insertCell().textContent = percent(share);
     };
     for (const row of view.rows) {
-      addRow(
-        [
-          marks(row.made),
-          ` ${row.bestKg === undefined ? "no lift" : kg(row.bestKg)}`,
-        ],
-        row.share,
-      );
+      addRow([marks(row.made), ` ${pathText(row, plans?.[lift])}`], row.share);
     }
     if (view.missedOpenerShare > 0) {
       addRow(
-        [marks([false], "…"), " after a missed opener"],
+        [marks([false], "…"), " missed opener, any 2nd and 3rd"],
         view.missedOpenerShare,
       );
     }
@@ -434,7 +447,16 @@ function attemptPanel(evaluation: Evaluation) {
     tabs.append(button);
   }
   show(shownLift);
-  return panel("How each attempt goes", false, [tabs, body]);
+  return panel("How each attempt goes", false, [
+    sub(
+      "How often each attempt is made, and every way the three attempts can go with how often it happens.",
+    ),
+    tabs,
+    body,
+    sub(
+      "✓ made, ✗ missed, in attempt order. The 2nd and 3rd weights depend on whether the attempt before was made, so their make chances count every weight they can be.",
+    ),
+  ]);
 }
 
 function dayPanel(evaluation: Evaluation) {
@@ -462,18 +484,29 @@ const deltaSpan = ({ text, direction }: Delta) =>
 
 function whatIfPanel({ changes, onApply }: AnalyticsData) {
   const intro = sub(
-    "Single changes that move your chances most, each tried on the same simulated meets.",
+    "Single changes that move your chances most, each tried on the same simulated meets. A 2nd or 3rd attempt is a jump: how much heavier than the attempt before.",
   );
+  const confirmation = element(
+    "p",
+    "applied",
+    applied && appliedLine(applied, changes !== undefined),
+  );
+  confirmation.tabIndex = -1;
+  confirmation.setAttribute("role", "status");
+  confirmation.hidden = !applied;
+  const title = "What if you change one thing?";
   if (!changes) {
-    return panel("What if you change one thing?", true, [
+    return panel(title, true, [
       intro,
+      confirmation,
       sub("Trying single changes…"),
     ]);
   }
   const picks = whatIfs(changes.current, changes.changes);
   if (picks.length === 0) {
-    return panel("What if you change one thing?", true, [
+    return panel(title, true, [
       intro,
+      confirmation,
       sub("No single change improves this plan or lowers its bomb-out chance."),
     ]);
   }
@@ -483,7 +516,13 @@ function whatIfPanel({ changes, onApply }: AnalyticsData) {
     const apply = element("button", "", "Apply");
     apply.type = "button";
     apply.setAttribute("aria-label", `Apply ${pick.text}`);
-    apply.addEventListener("click", () => onApply(pick.plans));
+    apply.addEventListener("click", () => {
+      applied = pick.text;
+      confirmation.textContent = appliedLine(applied, false);
+      confirmation.hidden = false;
+      confirmation.focus();
+      onApply(pick.plans);
+    });
     item.append(
       element("span", "change", pick.text),
       ...(pick.goal ? [deltaSpan(pick.goal)] : []),
@@ -492,5 +531,5 @@ function whatIfPanel({ changes, onApply }: AnalyticsData) {
     );
     list.append(item);
   }
-  return panel("What if you change one thing?", true, [intro, list]);
+  return panel(title, true, [intro, confirmation, list]);
 }

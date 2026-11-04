@@ -64,8 +64,9 @@ import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
 import {
   bestForGoalLabel,
-  highlightedPoints,
+  comparisonRows,
   noGoalPickNote,
+  planLines,
   shapeLabel,
 } from "./tradeoff-view.ts";
 
@@ -420,6 +421,7 @@ function showTradeoff() {
     (point) => usePlans(point.plans),
   );
   byId("tradeoff-legend").hidden = bestForGoal === undefined;
+  byId("tradeoff-colour-key").hidden = goalKg === undefined;
   byId("tradeoff-note").textContent = noGoalPickNote(
     goalKg,
     bombOutCap,
@@ -428,27 +430,43 @@ function showTradeoff() {
   const bestLabel = bestForGoalLabel(bombOutCap);
   byId("tradeoff-best-label").textContent = bestLabel;
   byId("tradeoff-plans").replaceChildren(
-    ...highlightedPoints(points, bestForGoal).map(({ point, bestForGoal }) => {
-      const row = document.createElement("tr");
-      const heading = document.createElement("th");
-      heading.scope = "row";
-      heading.textContent = shapeLabel(point.shape);
-      if (bestForGoal) heading.append(` (${bestLabel})`);
-      row.append(heading);
-      row.insertCell().textContent = format.percent(point.bombOutProbability);
-      row.insertCell().textContent = format.kg(point.expectedTotalKg);
-      row.insertCell().textContent =
-        point.goalProbability === undefined
-          ? "–"
-          : format.percent(point.goalProbability);
-      const use = document.createElement("button");
-      use.type = "button";
-      use.textContent = "Use";
-      use.setAttribute("aria-label", `Use ${describePoint(point)}`);
-      use.addEventListener("click", () => usePlans(point.plans));
-      row.insertCell().append(use);
-      return row;
-    }),
+    ...comparisonRows(points, bestForGoal).map(
+      ({ point, label, bestForGoal }) => {
+        const row = document.createElement("tr");
+        const heading = document.createElement("th");
+        heading.scope = "row";
+        const title = element("span", "plan-label", label);
+        if (bestForGoal) title.append(" ", element("span", "badge", bestLabel));
+        heading.append(
+          title,
+          ...[shapeLabel(point.shape), ...planLines(point.plans)].flatMap(
+            (text) => [" ", element("span", "plan-detail", text)],
+          ),
+        );
+        row.append(heading);
+        for (const [heading, text] of [
+          ["Bomb-out", format.percent(point.bombOutProbability)],
+          ["Average total", shortKg(point.expectedTotalKg)],
+          [
+            "Chance of goal",
+            point.goalProbability === undefined
+              ? "–"
+              : format.percent(point.goalProbability),
+          ],
+        ] as const) {
+          const cell = row.insertCell();
+          cell.dataset["label"] = heading;
+          cell.textContent = text;
+        }
+        const use = document.createElement("button");
+        use.type = "button";
+        use.textContent = "Use";
+        use.setAttribute("aria-label", `Use ${label}: ${describePoint(point)}`);
+        use.addEventListener("click", () => usePlans(point.plans));
+        row.insertCell().append(use);
+        return row;
+      },
+    ),
   );
 }
 

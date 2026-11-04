@@ -141,34 +141,46 @@
           </p>
           <p id="tradeoff-status" role="status"></p>
           <div id="tradeoff-view" hidden>
+            <p class="note how-to-read">
+              <strong>How to read it:</strong> up is a higher average total,
+              left is a lower chance of bombing out, so the best plans sit up
+              and to the left. The bomb-out axis is stretched at the low end (a
+              square-root scale): 0% to 1% takes as much room as 1% to 4%, so
+              the gaps between ticks are uneven.
+            </p>
             <svg
               id="tradeoff-chart"
               role="img"
-              aria-label="Average total against the chance of bombing out for every plan in the family. The table below lists the best plans."
+              aria-label="Average total against the chance of bombing out for every plan in the family, on a square-root bomb-out axis. The table below lists plans across the risk levels."
             ></svg>
             <ul class="chart-key">
-              <li>
-                <span class="key-family"></span> other plans in the family
-              </li>
+              <li><span class="key-family"></span> a plan in the family</li>
               <li><span class="key-current">+</span> your plan</li>
               <li id="tradeoff-legend">
                 <span class="key-best"></span>
-                <span id="tradeoff-best-label">best for the goal</span>; colour
-                shows the chance of reaching the goal, from
-                <span class="key-gradient"></span> 0% to 100%
+                <span id="tradeoff-best-label">best for the goal</span>
+              </li>
+              <li id="tradeoff-colour-key">
+                Colour shows the chance of reaching the goal: 0%
+                <span class="key-gradient"></span> 100%
               </li>
             </ul>
+            <p class="note">
+              Your plan can sit below the line: the line follows the highest
+              average total, while "Find my best plan" aims at the goal and your
+              bomb-out limit.
+            </p>
             <p id="tradeoff-note" class="note"></p>
-            <table>
+            <table class="comparison">
               <caption>
-                Best plans by risk
+                Plans across the risk levels
               </caption>
               <thead>
                 <tr>
-                  <th scope="col">Opener / 2nd / 3rd</th>
+                  <th scope="col">Plan and attempts after makes</th>
                   <th scope="col">Bomb-out</th>
                   <th scope="col">Average total</th>
-                  <th scope="col">Goal</th>
+                  <th scope="col">Chance of goal</th>
                   <td></td>
                 </tr>
               </thead>

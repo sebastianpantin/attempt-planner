@@ -1,0 +1,103 @@
+#tradeoff #tradeoff-chart {
+  max-width: 640px;
+}
+
+#tradeoff #tradeoff-chart .grid line {
+  stroke: var(--line);
+}
+
+#tradeoff #tradeoff-chart .grid .domain {
+  display: none;
+}
+
+#tradeoff #tradeoff-chart .family circle[style] {
+  opacity: 0.6;
+}
+
+#tradeoff .how-to-read {
+  margin: 0.5rem 0;
+}
+
+#tradeoff .chart-key li {
+  margin: 0.15rem 0;
+}
+
+#tradeoff .chart-key .key-gradient {
+  margin: 0 0.3rem;
+}
+
+#tradeoff table.comparison {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+#tradeoff table.comparison th,
+#tradeoff table.comparison td {
+  vertical-align: top;
+  padding: 8px 8px 8px 0;
+}
+
+#tradeoff table.comparison tbody tr + tr > * {
+  border-top: 1px solid var(--line);
+}
+
+#tradeoff .comparison .plan-label {
+  display: block;
+}
+
+#tradeoff .comparison .plan-detail {
+  display: block;
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+#tradeoff .comparison .badge {
+  display: inline-block;
+  white-space: nowrap;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+#tradeoff #tradeoff-plans button {
+  min-height: 44px;
+}
+
+@media (max-width: 600px) {
+  #tradeoff table.comparison thead {
+    display: none;
+  }
+
+  #tradeoff table.comparison tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+    gap: 4px 8px;
+    padding: 10px 0;
+  }
+
+  #tradeoff table.comparison tbody tr + tr {
+    border-top: 1px solid var(--line);
+  }
+
+  #tradeoff table.comparison tbody tr > * {
+    border-top: 0;
+    padding: 0;
+  }
+
+  #tradeoff table.comparison th {
+    grid-column: 1 / -1;
+  }
+
+  #tradeoff table.comparison td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+}
