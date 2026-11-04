@@ -7,7 +7,7 @@ use rand_distr::{Distribution, StandardNormal};
 use crate::lift::{Lift, PerLift};
 use crate::model::{DayForm, MakeRateCurve};
 use crate::plan::{LiftPlan, PlanStep};
-use crate::rules::{ATTEMPTS_PER_LIFT, BAR, RuleViolation, Weight, best_attempt};
+use crate::rules::{ATTEMPTS_PER_LIFT, Attempt, BAR, RuleViolation, Weight, best_attempt};
 
 pub const MAX_SIMULATIONS: u32 = 1_000_000;
 
@@ -191,6 +191,10 @@ pub struct LiftSummary {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "tsify", tsify(optional))]
     pub median_best_kg: Option<f64>,
+    /// Share of attempts missed because the load was too heavy on the day.
+    pub strength_miss_rate: f64,
+    /// Share of attempts missed whatever the load, for example on depth or a command.
+    pub technical_miss_rate: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -241,15 +245,14 @@ pub struct Evaluation {
 /// One simulated meet day: for each lift, the make threshold of each attempt.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeetDay {
+    /// The load below which each attempt is made. Minus infinity for a technical miss,
+    /// which no load can make.
     pub make_thresholds_kg: PerLift<[f64; ATTEMPTS_PER_LIFT]>,
+    /// Which attempts are technical misses.
+    pub technical_misses: PerLift<[bool; ATTEMPTS_PER_LIFT]>,
 }
 
 impl MeetDay {
-    /// Each lift's best made attempt on this day, or `None` for a lift with no make.
-    pub fn bests(&self, plans: &PerLift<LiftPlan>) -> PerLift<Option<Weight>> {
-        plans.map(|lift, plan| self.best(lift, plan))
-    }
-
     /// The best made attempt of one lift on this day, or `None` when it has no make.
     pub fn best(&self, lift: Lift, plan: &LiftPlan) -> Option<Weight> {
         best_attempt(&plan.attempts(*self.make_thresholds_kg.get(lift)))
@@ -285,13 +288,28 @@ impl MeetDays {
             let shared: f64 = StandardNormal.sample(&mut rng);
             let own = PerLift::from_fn(|_| StandardNormal.sample(&mut rng));
             let day_max_kg = self.lifter.day_form.day_maxes(&expected_kg, shared, &own);
-            let rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]> = PerLift::from_fn(|_| rng.random());
+            let strength_rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]> =
+                PerLift::from_fn(|_| rng.random());
+            let technical_rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]> =
+                PerLift::from_fn(|_| rng.random());
+            let technical_misses = technical_rolls.map(|lift, rolls| {
+                let chance = self.lifter.lifts.get(lift).curve.technical_miss_chance;
+                rolls.map(|roll| roll < chance)
+            });
             MeetDay {
-                make_thresholds_kg: rolls.map(|lift, rolls| {
+                make_thresholds_kg: strength_rolls.map(|lift, rolls| {
                     let curve = &self.lifter.lifts.get(lift).curve;
                     let day_max_kg = *day_max_kg.get(lift);
-                    rolls.map(|roll| curve.make_threshold_kg(day_max_kg, roll))
+                    let technical = technical_misses.get(lift);
+                    std::array::from_fn(|attempt| {
+                        if technical[attempt] {
+                            f64::NEG_INFINITY
+                        } else {
+                            curve.make_threshold_kg(day_max_kg, rolls[attempt])
+                        }
+                    })
                 }),
+                technical_misses,
             }
         })
     }
@@ -307,7 +325,8 @@ impl MeetDays {
         }
         let mut tally = Tally::new(self.simulations);
         for day in self.iter() {
-            tally.record(day.bests(plans));
+            let attempts = plans.map(|lift, plan| plan.attempts(*day.make_thresholds_kg.get(lift)));
+            tally.record(&attempts, &day.technical_misses);
         }
         Ok(tally.finish(goal))
     }
@@ -362,6 +381,8 @@ struct Tally {
     totals: Vec<Weight>,
     /// Each lift's best attempt in every meet where it had a make.
     bests: PerLift<Vec<Weight>>,
+    strength_misses: PerLift<u32>,
+    technical_misses: PerLift<u32>,
 }
 
 impl Tally {
@@ -369,10 +390,29 @@ impl Tally {
         Self {
             totals: Vec::with_capacity(simulations as usize),
             bests: PerLift::from_fn(|_| Vec::new()),
+            strength_misses: PerLift::from_fn(|_| 0),
+            technical_misses: PerLift::from_fn(|_| 0),
         }
     }
 
-    fn record(&mut self, bests: PerLift<Option<Weight>>) {
+    fn record(
+        &mut self,
+        attempts: &PerLift<[Attempt; ATTEMPTS_PER_LIFT]>,
+        technical_misses: &PerLift<[bool; ATTEMPTS_PER_LIFT]>,
+    ) {
+        for (lift, attempts) in attempts.iter() {
+            for (attempt, technical) in attempts.iter().zip(technical_misses.get(lift)) {
+                if !attempt.made {
+                    let misses = if *technical {
+                        &mut self.technical_misses
+                    } else {
+                        &mut self.strength_misses
+                    };
+                    *misses.get_mut(lift) += 1;
+                }
+            }
+        }
+        let bests = attempts.map(|_, attempts| best_attempt(attempts));
         for (lift, best) in bests.iter() {
             if let Some(best) = best {
                 self.bests.get_mut(lift).push(*best);
@@ -420,9 +460,14 @@ impl Tally {
                 goal_probability: goal_probability.map(proportion_error),
                 expected_total_kg: (variance / runs).sqrt(),
             },
-            lifts: self.bests.map(|_, bests| LiftSummary {
-                make_probability: bests.len() as f64 / runs,
-                median_best_kg: (!bests.is_empty()).then(|| nearest_rank(bests, 0.5).kg()),
+            lifts: self.bests.map(|lift, bests| {
+                let attempts = runs * ATTEMPTS_PER_LIFT as f64;
+                LiftSummary {
+                    make_probability: bests.len() as f64 / runs,
+                    median_best_kg: (!bests.is_empty()).then(|| nearest_rank(bests, 0.5).kg()),
+                    strength_miss_rate: f64::from(*self.strength_misses.get(lift)) / attempts,
+                    technical_miss_rate: f64::from(*self.technical_misses.get(lift)) / attempts,
+                }
             }),
         }
     }
@@ -446,6 +491,7 @@ mod tests {
         MakeRateCurve {
             ratio_at_half: 1.0,
             steepness,
+            technical_miss_chance: 0.0,
         }
     }
 
@@ -598,6 +644,30 @@ mod tests {
         assert_eq!(first.lifts.bench, second.lifts.bench);
         assert_eq!(first.lifts.deadlift, second.lifts.deadlift);
         assert_eq!(days.evaluate(&meet.plans, None), evaluate(&meet));
+    }
+
+    #[test]
+    fn technical_misses_happen_at_their_chance_even_on_light_attempts() {
+        let mut meet = certain_meet();
+        meet.simulations = 20_000;
+        meet.lifter.lifts.squat.curve.technical_miss_chance = 0.1;
+        meet.plans.squat = plan(180.0, 10.0, 7.5);
+        let squat = evaluate(&meet).unwrap().lifts.squat;
+        assert_eq!(squat.strength_miss_rate, 0.0);
+        assert!((squat.technical_miss_rate - 0.1).abs() < 0.01, "{squat:?}");
+        assert!(
+            (squat.make_probability - (1.0 - 0.001)).abs() < 0.001,
+            "{squat:?}"
+        );
+    }
+
+    #[test]
+    fn attempts_over_the_day_max_are_strength_misses() {
+        let mut meet = certain_meet();
+        meet.plans.bench = plan(140.0, 2.5, 2.5);
+        let bench = evaluate(&meet).unwrap().lifts.bench;
+        assert_eq!(bench.strength_miss_rate, 1.0);
+        assert_eq!(bench.technical_miss_rate, 0.0);
     }
 
     #[test]

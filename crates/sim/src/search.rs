@@ -312,6 +312,7 @@ mod tests {
                 curve: MakeRateCurve {
                     ratio_at_half: 1.0,
                     steepness,
+                    technical_miss_chance: 0.0,
                 },
             }),
             day_form: DayForm {

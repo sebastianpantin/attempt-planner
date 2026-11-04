@@ -12,24 +12,36 @@ pub struct MakeRateCurve {
     pub ratio_at_half: f64,
     /// How quickly the make rate falls as the ratio rises past `ratio_at_half`.
     pub steepness: f64,
+    /// Chance of missing an attempt whatever the load, for example on depth or a command.
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
+    pub technical_miss_chance: f64,
 }
 
 impl MakeRateCurve {
+    /// Chance of making `load`: no technical miss, and the load is not too heavy.
     pub fn make_probability(&self, load: Weight, day_max_kg: f64) -> f64 {
+        (1.0 - self.technical_miss_chance) * self.strength_make_probability(load, day_max_kg)
+    }
+
+    /// Chance that `load` is not too heavy for a day max of `day_max_kg`.
+    pub fn strength_make_probability(&self, load: Weight, day_max_kg: f64) -> f64 {
         let ratio = load.kg() / day_max_kg;
         1.0 / (1.0 + (self.steepness * (ratio - self.ratio_at_half)).exp())
     }
 
-    /// The load below which an attempt with this roll is made. Comparing the load with it
-    /// gives the same answer as `roll < make_probability(load, day_max_kg)`, with the
-    /// logarithm paid once per roll instead of an exponential per load.
+    /// The load below which an attempt with this roll is strong enough. Comparing the load
+    /// with it gives the same answer as `roll < strength_make_probability(load, day_max_kg)`,
+    /// with the logarithm paid once per roll instead of an exponential per load.
     pub fn make_threshold_kg(&self, day_max_kg: f64, roll: f64) -> f64 {
         day_max_kg * (self.ratio_at_half + (1.0 / roll - 1.0).ln() / self.steepness)
     }
 
     pub fn is_valid(&self) -> bool {
         let positive = |x: f64| x.is_finite() && x > 0.0;
-        positive(self.ratio_at_half) && positive(self.steepness)
+        positive(self.ratio_at_half)
+            && positive(self.steepness)
+            && (0.0..1.0).contains(&self.technical_miss_chance)
     }
 }
 
@@ -78,6 +90,7 @@ mod tests {
     const CURVE: MakeRateCurve = MakeRateCurve {
         ratio_at_half: 1.0,
         steepness: 20.0,
+        technical_miss_chance: 0.0,
     };
 
     #[test]
@@ -99,12 +112,34 @@ mod tests {
             roll in 0.0..1.0f64,
         ) {
             let load = Weight::from_grams(load / 2_500 * 2_500);
-            let probability = CURVE.make_probability(load, day_max_kg);
+            let probability = CURVE.strength_make_probability(load, day_max_kg);
             proptest::prop_assume!((roll - probability).abs() > 1e-9);
             proptest::prop_assert_eq!(
                 roll < probability,
                 load.kg() < CURVE.make_threshold_kg(day_max_kg, roll)
             );
+        }
+    }
+
+    #[test]
+    fn technical_misses_scale_the_make_probability() {
+        let curve = MakeRateCurve {
+            technical_miss_chance: 0.1,
+            ..CURVE
+        };
+        let strength = CURVE.make_probability(kg(190.0), 200.0);
+        assert!((curve.make_probability(kg(190.0), 200.0) - 0.9 * strength).abs() < 1e-12);
+    }
+
+    #[test]
+    fn technical_miss_chance_must_leave_room_to_make_an_attempt() {
+        let with = |technical_miss_chance| MakeRateCurve {
+            technical_miss_chance,
+            ..CURVE
+        };
+        assert!(with(0.0).is_valid() && with(0.5).is_valid());
+        for chance in [-0.1, 1.0, f64::NAN] {
+            assert!(!with(chance).is_valid(), "{chance}");
         }
     }
 
@@ -132,7 +167,8 @@ mod tests {
             assert!(
                 !MakeRateCurve {
                     ratio_at_half,
-                    steepness
+                    steepness,
+                    technical_miss_chance: 0.0,
                 }
                 .is_valid()
             );
