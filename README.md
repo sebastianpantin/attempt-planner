@@ -40,11 +40,13 @@ The day form and make-rate numbers are inputs under "Advanced".
 
 The fit matches 2nd and 3rd attempts closely but makes openers look safer than they are, most clearly for the bench. Real meets have misses that have little to do with the load, like a missed command or a depth call, and the model has no term for them. Lifters also pick their jumps knowing how the day is going, which the typical plan ignores.
 
-`crates/fit` does the calibration. It reads the Parquet file that [openpowerlifting-mcp](https://github.com/sebastianpantin/openpowerlifting-mcp) downloads and converts:
+`crates/fit` does the calibration. Download the bulk CSV from https://data.openpowerlifting.org, unzip it, and run:
 
 ```sh
-cargo run --release -p attempt-fit -- path/to/openpowerlifting.parquet
+cargo run --release -p attempt-fit -- path/to/openpowerlifting.csv
 ```
+
+It takes a few seconds. This uses data from the OpenPowerlifting project, https://www.openpowerlifting.org, which is in the public domain; this repository does not include it.
 
 The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 
