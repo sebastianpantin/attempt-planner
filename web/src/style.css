@@ -1,0 +1,123 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  --problem: #c0392b;
+  --muted: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+main {
+  max-width: 72rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.layout {
+  display: grid;
+  gap: 1rem 2rem;
+}
+
+@media (min-width: 60rem) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 24rem;
+    align-items: start;
+  }
+
+  #results {
+    position: sticky;
+    top: 1rem;
+  }
+}
+
+#results h2 {
+  margin-top: 0;
+}
+
+fieldset {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+input[type="number"] {
+  width: 6rem;
+}
+
+input[aria-invalid="true"] {
+  outline: 2px solid var(--problem);
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  text-align: left;
+}
+
+thead th {
+  font-weight: 500;
+}
+
+.jumps td {
+  white-space: nowrap;
+}
+
+.tree,
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 1.25rem;
+  border-left: 1px solid var(--muted);
+}
+
+.tree {
+  padding-left: 0;
+  border-left: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.problems {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--problem);
+}
+
+.problems:empty {
+  display: none;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+#results dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.25rem 1.5rem;
+  justify-content: start;
+  font-variant-numeric: tabular-nums;
+}
+
+#results dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+caption {
+  text-align: left;
+  font-weight: 600;
+}
+
+#results[aria-busy="true"] #evaluation {
+  opacity: 0.5;
+}
