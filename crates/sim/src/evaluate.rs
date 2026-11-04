@@ -230,11 +230,17 @@ pub struct Evaluation {
     pub lifts: PerLift<LiftSummary>,
 }
 
-/// One simulated meet day: each lift's day max and the rolls that decide its attempts.
+/// One simulated meet day: for each lift, the make threshold of each attempt.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeetDay {
-    pub day_max_kg: PerLift<f64>,
-    pub rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]>,
+    pub make_thresholds_kg: PerLift<[f64; ATTEMPTS_PER_LIFT]>,
+}
+
+impl MeetDay {
+    /// Each lift's best made attempt on this day, or `None` for a lift with no make.
+    pub fn bests(&self, plans: &PerLift<LiftPlan>) -> PerLift<Option<Weight>> {
+        plans.map(|lift, plan| best_attempt(&plan.attempts(*self.make_thresholds_kg.get(lift))))
+    }
 }
 
 /// A seeded set of simulated meet days for one lifter. Every plan evaluated against the
@@ -265,9 +271,14 @@ impl MeetDays {
         (0..self.simulations).map(move |_| {
             let shared: f64 = StandardNormal.sample(&mut rng);
             let own = PerLift::from_fn(|_| StandardNormal.sample(&mut rng));
+            let day_max_kg = self.lifter.day_form.day_maxes(&expected_kg, shared, &own);
+            let rolls: PerLift<[f64; ATTEMPTS_PER_LIFT]> = PerLift::from_fn(|_| rng.random());
             MeetDay {
-                day_max_kg: self.lifter.day_form.day_maxes(&expected_kg, shared, &own),
-                rolls: PerLift::from_fn(|_| rng.random()),
+                make_thresholds_kg: rolls.map(|lift, rolls| {
+                    let curve = &self.lifter.lifts.get(lift).curve;
+                    let day_max_kg = *day_max_kg.get(lift);
+                    rolls.map(|roll| curve.make_threshold_kg(day_max_kg, roll))
+                }),
             }
         })
     }
@@ -283,10 +294,7 @@ impl MeetDays {
         }
         let mut tally = Tally::new(self.simulations);
         for day in self.iter() {
-            tally.record(plans.map(|lift, plan| {
-                let curve = &self.lifter.lifts.get(lift).curve;
-                best_attempt(&plan.attempts(curve, *day.day_max_kg.get(lift), *day.rolls.get(lift)))
-            }));
+            tally.record(day.bests(plans));
         }
         Ok(tally.finish(goal))
     }
@@ -742,7 +750,8 @@ mod tests {
             rolls in prop::array::uniform3(0.0..1.0f64),
         ) {
             prop_assert!(plan.problems().is_empty());
-            let attempts = plan.attempts(&curve(SHARP), day_max_kg, rolls);
+            let thresholds = rolls.map(|roll| curve(SHARP).make_threshold_kg(day_max_kg, roll));
+            let attempts = plan.attempts(thresholds);
             prop_assert_eq!(check_progression(&attempts), Ok(()));
         }
 
