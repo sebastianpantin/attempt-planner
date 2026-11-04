@@ -41,6 +41,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
+      - run: wasm-pack test --node --release crates/sim-wasm
       - run: wasm-pack build crates/sim-wasm --release --target web --out-dir ../../web/pkg
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v4

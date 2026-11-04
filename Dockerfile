@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
 # Everything here works with Docker alone, no Rust toolchain needed:
-#   docker build --target test .                       fmt, clippy and tests
+#   docker build --target test .                       fmt, clippy, tests, WebAssembly tests in Node
 #   docker build -t attempt-planner . \
 #     && docker run --rm -p 8000:80 attempt-planner    site on http://localhost:8000
 #   docker build --target pkg --output web/pkg .       WebAssembly package only
 
 FROM rust:1 AS toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 RUN rustup component add clippy rustfmt \
     && rustup target add wasm32-unknown-unknown \
     && cargo install wasm-pack --locked
@@ -15,10 +17,12 @@ COPY crates crates
 
 FROM toolchain AS test
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/root/.cache/.wasm-pack \
     --mount=type=cache,target=/src/target \
     cargo fmt --all --check \
     && cargo clippy --workspace --all-targets -- -D warnings \
-    && cargo test --workspace
+    && cargo test --workspace \
+    && wasm-pack test --node --release crates/sim-wasm
 
 FROM toolchain AS build
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
