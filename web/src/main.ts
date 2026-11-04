@@ -30,6 +30,7 @@ import {
   type LiftField,
   LIFTS,
   planValues,
+  PRECISE_SIMULATIONS,
 } from "./inputs.ts";
 import {
   buildEstimateRequest,
@@ -179,7 +180,10 @@ function markProblems(problems: Problem[]) {
   }
 }
 
-function showEvaluation(evaluation: Evaluation | undefined) {
+function showEvaluation(
+  evaluation: Evaluation | undefined,
+  simulations: number,
+) {
   byId("evaluation").hidden = !evaluation;
   if (!evaluation) return;
   const { standardErrors: errors, totalPercentilesKg: totals } = evaluation;
@@ -189,25 +193,16 @@ function showEvaluation(evaluation: Evaluation | undefined) {
       : [
           [
             "Chance of reaching the goal",
-            format.percentWithError(
-              evaluation.goalProbability,
-              errors.goalProbability ?? 0,
-            ),
+            format.percent(evaluation.goalProbability),
           ],
         ];
   const rows: [string, string][] = [
     [
       "Average total, counting a bomb-out as 0",
-      format.kgWithError(evaluation.expectedTotalKg, errors.expectedTotalKg),
+      format.kg(evaluation.expectedTotalKg),
     ],
     ...goalRows,
-    [
-      "Chance of bombing out",
-      format.percentWithError(
-        evaluation.bombOutProbability,
-        errors.bombOutProbability,
-      ),
-    ],
+    ["Chance of bombing out", format.percent(evaluation.bombOutProbability)],
     [
       "Average total without a bomb-out",
       evaluation.expectedTotalWithoutBombOutKg === undefined
@@ -227,6 +222,10 @@ function showEvaluation(evaluation: Evaluation | undefined) {
       dd.textContent = value;
       return [dt, dd];
     }),
+  );
+  byId("simulation-error").textContent = format.simulationError(
+    errors,
+    simulations < PRECISE_SIMULATIONS,
   );
   byId("lift-results").replaceChildren(
     ...LIFTS.map((lift) => {
@@ -291,9 +290,7 @@ function showTradeoff() {
       heading.textContent = shapeLabel(point.shape);
       if (bestForGoal) heading.append(" (best for the goal)");
       row.append(heading);
-      row.insertCell().textContent = format.finePercent(
-        point.bombOutProbability,
-      );
+      row.insertCell().textContent = format.percent(point.bombOutProbability);
       row.insertCell().textContent = format.kg(point.expectedTotalKg);
       row.insertCell().textContent =
         point.goalProbability === undefined
@@ -322,23 +319,19 @@ function report(
   else status(id, done());
 }
 
-const timing = (elapsedMs: number) =>
-  `in ${count.format(Math.round(elapsedMs))} ms`;
-
 const submitEvaluation = simulationWorker("evaluate", {
   started: (request) =>
     status("status", `Simulating ${count.format(request.simulations)} meets…`),
-  finished(reply, request, elapsedMs) {
+  finished(reply, request) {
     byId("results").removeAttribute("aria-busy");
     markProblems(reply.kind === "invalid" ? reply.problems : []);
     shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
-    showEvaluation(shownEvaluation);
+    showEvaluation(shownEvaluation, request.simulations);
     showTradeoff();
     report(
       "status",
       reply,
-      () =>
-        `${count.format(request.simulations)} simulated meets ${timing(elapsedMs)}.`,
+      () => `${count.format(request.simulations)} simulated meets.`,
       "Fix the marked inputs to see results.",
       "The simulation failed",
     );
@@ -347,7 +340,7 @@ const submitEvaluation = simulationWorker("evaluate", {
 
 const submitTradeoff = simulationWorker("tradeoff", {
   started: () => status("tradeoff-status", "Comparing plans…"),
-  finished(reply, request, elapsedMs) {
+  finished(reply, request) {
     byId("tradeoff").removeAttribute("aria-busy");
     shownTradeoff = reply.kind === "swept" ? reply : undefined;
     showTradeoff();
@@ -356,7 +349,7 @@ const submitTradeoff = simulationWorker("tradeoff", {
       reply,
       () =>
         shownTradeoff?.points.length
-          ? `${count.format(shownTradeoff.points.length)} plans, ${count.format(request.simulations)} meets each, ${timing(elapsedMs)}.`
+          ? `${count.format(shownTradeoff.points.length)} plans, ${count.format(request.simulations)} meets each.`
           : "No plan in the family fits these maxes.",
       "Fix the marked inputs to see the tradeoff.",
       "The comparison failed",
