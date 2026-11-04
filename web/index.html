@@ -4,30 +4,88 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Attempt planner</title>
-    <link rel="stylesheet" href="style.css" />
-    <script type="module" src="main.js"></script>
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="module" src="./src/main.ts"></script>
   </head>
   <body>
     <main>
       <h1>Attempt planner</h1>
       <p>
-        Plan openers and jumps for a meet and see how each plan plays out over
-        thousands of simulated meet days. Work in progress: for now this page
-        only checks a set of attempts against the rules.
+        Plan openers and jumps for a powerlifting meet and see how the plan
+        plays out over thousands of simulated meet days. Each lift's 2nd and 3rd
+        attempts depend on whether the attempt before was made.
       </p>
 
-      <form id="attempts">
-        <fieldset>
-          <legend>Squat attempts</legend>
-          <label>1st <input name="weight" type="number" value="200" /></label>
-          <label><input name="made" type="checkbox" checked /> made</label>
-          <label>2nd <input name="weight" type="number" value="210" /></label>
-          <label><input name="made" type="checkbox" checked /> made</label>
-          <label>3rd <input name="weight" type="number" value="217.5" /></label>
-          <label><input name="made" type="checkbox" /> made</label>
-        </fieldset>
-        <output id="verdict" aria-live="polite"></output>
-      </form>
+      <div class="layout">
+        <form id="plan" novalidate>
+          <fieldset>
+            <legend>Meet</legend>
+            <label>
+              Goal total (kg, optional)
+              <input name="goalKg" type="number" min="0" step="2.5" />
+            </label>
+            <label>
+              <input name="precise" type="checkbox" />
+              Precise: 1,000,000 meets instead of 20,000
+            </label>
+            <ul class="problems" id="meet-problems"></ul>
+          </fieldset>
+
+          <div id="lifts"></div>
+
+          <details>
+            <summary>Advanced</summary>
+            <fieldset>
+              <legend>Day form</legend>
+              <label>
+                Spread of the day max
+                <input name="spreadPercent" type="number" min="0" step="0.5" />
+                %
+              </label>
+              <label>
+                Correlation between lifts
+                <input
+                  name="correlation"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                />
+              </label>
+            </fieldset>
+            <fieldset>
+              <legend>Make rate</legend>
+              <p class="hint">
+                The chance of making an attempt falls along a logistic curve as
+                the load nears the day's max. The midpoint is the load ÷ day max
+                ratio with a 50% make rate.
+              </p>
+              <div id="curves"></div>
+            </fieldset>
+          </details>
+        </form>
+
+        <section id="results" aria-labelledby="results-heading">
+          <h2 id="results-heading">Results</h2>
+          <p id="status" role="status"></p>
+          <div id="evaluation" hidden>
+            <dl id="summary"></dl>
+            <table>
+              <caption>
+                Per lift
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Lift</th>
+                  <th scope="col">At least one make</th>
+                  <th scope="col">Expected best</th>
+                </tr>
+              </thead>
+              <tbody id="lift-results"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </main>
   </body>
 </html>
