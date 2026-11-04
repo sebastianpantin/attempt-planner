@@ -89,13 +89,16 @@ function curveRow(lift: Lift): string {
             aria-label="${name} make-rate midpoint" /></td>
       <td><input name="${inputName(lift, "steepness")}" type="number" min="0" step="1"
             aria-label="${name} make-rate steepness" /></td>
+      <td><input name="${inputName(lift, "technicalMissPercent")}" type="number" min="0"
+            max="99" step="0.5" aria-label="${name} technical-miss chance (%)" /></td>
     </tr>`;
 }
 
 byId("lifts").innerHTML = LIFTS.map(liftFieldset).join("");
 byId("curves").innerHTML = `
   <table>
-    <thead><tr><td></td><th scope="col">Midpoint</th><th scope="col">Steepness</th></tr></thead>
+    <thead><tr><td></td><th scope="col">Midpoint</th><th scope="col">Steepness</th>
+      <th scope="col">Technical miss (%)</th></tr></thead>
     <tbody>${LIFTS.map(curveRow).join("")}</tbody>
   </table>`;
 
@@ -215,7 +218,12 @@ function showEvaluation(evaluation: Evaluation | undefined) {
   );
   byId("lift-results").replaceChildren(
     ...LIFTS.map((lift) => {
-      const { makeProbability, medianBestKg } = evaluation.lifts[lift];
+      const {
+        makeProbability,
+        medianBestKg,
+        strengthMissRate,
+        technicalMissRate,
+      } = evaluation.lifts[lift];
       const row = document.createElement("tr");
       const heading = document.createElement("th");
       heading.scope = "row";
@@ -224,6 +232,8 @@ function showEvaluation(evaluation: Evaluation | undefined) {
       row.insertCell().textContent = format.percent(makeProbability);
       row.insertCell().textContent =
         medianBestKg === undefined ? "–" : format.kg(medianBestKg);
+      row.insertCell().textContent = format.percent(strengthMissRate);
+      row.insertCell().textContent = format.percent(technicalMissRate);
       return row;
     }),
   );

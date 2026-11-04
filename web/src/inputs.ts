@@ -24,6 +24,7 @@ const LIFT_FIELDS = [
   "thirdAfterMissKg",
   "ratioAtHalf",
   "steepness",
+  "technicalMissPercent",
 ] as const;
 
 const MEET_FIELDS = [
@@ -66,6 +67,7 @@ export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
         curve: {
           ratioAtHalf: read(lift, "ratioAtHalf"),
           steepness: read(lift, "steepness"),
+          technicalMissChance: read(lift, "technicalMissPercent") / 100,
         },
       })),
       dayForm: {
@@ -136,7 +138,7 @@ export function planValues(plans: PerLift<LiftPlanKg>): [InputName, number][] {
 
 const PROBLEM_LIFT_FIELDS: Partial<Record<InputField, LiftField[]>> = {
   expectedMax: ["expectedMaxKg"],
-  curve: ["ratioAtHalf", "steepness"],
+  curve: ["ratioAtHalf", "steepness", "technicalMissPercent"],
   opener: ["openerKg"],
   second: ["secondAfterMakeKg", "secondAfterMissKg"],
   third: ["thirdAfterMakeKg", "thirdAfterMissKg"],

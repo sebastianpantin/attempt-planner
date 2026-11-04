@@ -26,12 +26,13 @@ describe("buildRequest", () => {
         "bench-thirdAfterMissKg": 0,
         "bench-ratioAtHalf": 1.02,
         "bench-steepness": 40,
+        "bench-technicalMissPercent": 2.5,
       },
       false,
     );
     expect(request.lifter.lifts.bench).toEqual({
       expectedMaxKg: 135,
-      curve: { ratioAtHalf: 1.02, steepness: 40 },
+      curve: { ratioAtHalf: 1.02, steepness: 40, technicalMissChance: 0.025 },
     });
     expect(request.plans.bench).toEqual({
       openerKg: 122.5,
@@ -87,6 +88,7 @@ describe("inputsFor", () => {
     expect(inputsFor(problem("curve", "bench"))).toEqual([
       "bench-ratioAtHalf",
       "bench-steepness",
+      "bench-technicalMissPercent",
     ]);
   });
 
@@ -113,7 +115,7 @@ describe("describeProblem", () => {
 });
 
 it("lists every number input once", () => {
-  expect(INPUT_NAMES).toHaveLength(3 * 8 + 4);
+  expect(INPUT_NAMES).toHaveLength(3 * 9 + 4);
   expect(new Set(INPUT_NAMES).size).toBe(INPUT_NAMES.length);
   expect(Object.keys(EXAMPLE).sort()).toEqual([...INPUT_NAMES].sort());
 });
