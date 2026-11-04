@@ -1,4 +1,7 @@
 import {
+  estimateMaxes,
+  type MaxEstimate,
+  type MaxEstimateInput,
   PlanSearch,
   type SearchProgress,
   type SearchRequest,
@@ -16,6 +19,10 @@ export type Failed = { kind: "failed"; message: string };
 export interface Jobs {
   evaluate: { request: EvaluateRequest; response: EvaluateResponse };
   tradeoff: { request: TradeoffRequest; response: TradeoffResponse };
+  estimate: {
+    request: MaxEstimateInput;
+    response: { kind: "estimated"; estimate: MaxEstimate };
+  };
 }
 
 export type Reply<K extends keyof Jobs> = Jobs[K]["response"] | Failed;
@@ -38,9 +45,14 @@ export function answer(
   job: Extract<Job, { kind: keyof Jobs }>,
 ): Reply<keyof Jobs> {
   try {
-    return job.kind === "evaluate"
-      ? evaluate(job.request)
-      : tradeoff(job.request);
+    switch (job.kind) {
+      case "evaluate":
+        return evaluate(job.request);
+      case "tradeoff":
+        return tradeoff(job.request);
+      case "estimate":
+        return { kind: "estimated", estimate: estimateMaxes(job.request) };
+    }
   } catch (error) {
     return failed(error);
   }

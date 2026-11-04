@@ -9,6 +9,7 @@ import {
   buildSearchRequest,
   buildTradeoffRequest,
 } from "./inputs.ts";
+import { buildEstimateRequest, parsePastMeets } from "./past-meets.ts";
 
 beforeAll(() => {
   const wasm = new URL("../pkg/attempt_sim_wasm_bg.wasm", import.meta.url);
@@ -92,4 +93,34 @@ it("fails a search whose input has a problem", () => {
       message: "bomb-out cap must be a chance between 0 and 1",
     },
   ]);
+});
+
+it("estimates maxes from past meets", () => {
+  const { meets } = parsePastMeets(
+    [
+      "2025-03-15 180 190 -197.5 120 125 -130 220 235 245",
+      "2025-06-14 182.5 192.5 200 120 127.5 -132.5 222.5 237.5 -250",
+    ].join("\n"),
+  );
+  const reply = answer({
+    kind: "estimate",
+    request: buildEstimateRequest(EXAMPLE, meets, 20_300),
+  });
+  if (reply.kind !== "estimated") throw new Error(JSON.stringify(reply));
+  const { squat, bench } = reply.estimate.lifts;
+  expect(squat?.meets).toBe(2);
+  expect(squat?.expectedMaxKg).toBeGreaterThan(190);
+  expect(squat?.expectedMaxKg).toBeLessThan(215);
+  expect(bench?.uncertainty).toBeGreaterThan(0);
+});
+
+it("fails an estimate without attempts", () => {
+  const reply = answer({
+    kind: "estimate",
+    request: buildEstimateRequest(EXAMPLE, [], 20_300),
+  });
+  expect(reply).toEqual({
+    kind: "failed",
+    message: "no past meet has an attempt",
+  });
 });

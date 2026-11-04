@@ -11,6 +11,8 @@ const RATIO_AT_HALF = 1;
 const STEEPNESS = { squat: 56, bench: 94, deadlift: 109 };
 const TECHNICAL_MISS_PERCENT = { squat: 0, bench: 3, deadlift: 1 };
 const SPREAD_PERCENT = 3;
+/** The fitted typical opener, as a share of the expected max. */
+export const TYPICAL_OPENER = { squat: 0.89, bench: 0.91, deadlift: 0.89 };
 const MAX_UNCERTAINTY_PERCENT = 3;
 
 export const EXAMPLE: FormValues = {

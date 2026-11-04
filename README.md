@@ -8,6 +8,7 @@ Choose openers and attempt jumps for a powerlifting meet by simulating the meet 
 
 ## What it does
 
+- **Estimate your maxes from past meets.** Paste the CSV from your OpenPowerlifting lifter page, or type each meet's date and nine attempts. The page estimates each lift's expected max today, how sure that estimate is, and how fast you have been getting stronger, and can fill them in. Nothing leaves the browser.
 - **Evaluate a plan.** Enter each lift's expected max and a plan: an opener, then how much to jump for the 2nd and 3rd attempts after a make and after a miss. The page shows the average total, the chance of reaching a goal total, the chance of bombing out, the spread of totals, and each lift's median best, from 20,000 simulated meets (or 1,000,000 in precise mode). The average total and the two chances come with their Monte Carlo standard errors.
 - **See the tradeoff.** A chart of a whole family of plans, from conservative to aggressive, by bomb-out chance and average total. It highlights the best plan at each level of risk and the best plan for the goal. Any highlighted plan can be filled in with one click.
 - **Find the best plan.** A search for the openers and jumps with the best chance of reaching the goal, or the highest average total without a goal, optionally keeping the bomb-out chance under a cap.
@@ -23,6 +24,15 @@ Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and ev
 - **Search.** Starts from the best plan in the tradeoff family, then changes one setting of one lift at a time and keeps any change that ranks higher, until a whole round changes nothing. It picks and reports plans on the same 20,000 meets, so its figures are slightly optimistic; precise mode re-checks a plan on more meets.
 
 The day form and make-rate numbers are inputs under "Advanced".
+
+### Estimating maxes from past meets
+
+A meet's attempts say a lot about the day max: it was above every made attempt and probably below the misses. The estimate takes each lift's level today and one yearly rate of progress shared by the lifts, and picks the values that make the past meets' makes and misses most likely under the make-rate curves and day form above. Two more pieces of evidence keep it sensible when there is little data:
+
+- Lifters open at a typical share of their max (the fitted 89–91%, give or take 5%), so a lifter who never misses still gets a finite max.
+- Progress is assumed to be none, give or take 10% a year, until the meets say otherwise.
+
+The uncertainty it reports comes from how sharply the likelihood peaks, and is filled in as the uncertainty of the expected max. It assumes steady progress, so a long history with a recent jump or slump can make it too sure; leaving out old meets helps.
 
 ### Where the default make-rate curve comes from
 

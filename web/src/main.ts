@@ -2,6 +2,7 @@ import type {
   EvaluateRequest,
   Evaluation,
   Lift,
+  MaxEstimate,
   Problem,
   TradeoffPoint,
   TradeoffResponse,
@@ -25,6 +26,12 @@ import {
   LIFTS,
   planValues,
 } from "./inputs.ts";
+import {
+  buildEstimateRequest,
+  estimateValues,
+  parsePastMeets,
+  today,
+} from "./past-meets.ts";
 import { startSearch } from "./search-runner.ts";
 import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
@@ -409,7 +416,76 @@ cancelButton.addEventListener("click", () => {
   searchEnded("Search cancelled. The plan is unchanged.");
 });
 
-form.addEventListener("input", () => {
+const pastMeets = byId("past-meets") as HTMLTextAreaElement;
+const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
+const useEstimateButton = byId("use-estimate") as HTMLButtonElement;
+let estimatedValues: [InputName, number][] = [];
+let skippedMeets = 0;
+
+function showEstimate(estimate: MaxEstimate | undefined) {
+  estimatedValues = estimate ? estimateValues(estimate) : [];
+  useEstimateButton.hidden = estimatedValues.length === 0;
+  byId("estimate-results").replaceChildren(
+    ...(estimate
+      ? LIFTS.flatMap((lift) => {
+          const found = estimate.lifts[lift];
+          return found
+            ? [
+                listItem(
+                  `${LIFT_NAMES[lift]}: ${format.kg(found.expectedMaxKg)} ± ${format.percent(found.uncertainty)}, from ${count.format(found.meets)} ${found.meets === 1 ? "meet" : "meets"}`,
+                ),
+              ]
+            : [];
+        })
+      : []),
+  );
+}
+
+const submitEstimate = simulationWorker("estimate", {
+  started: () => status("estimate-status", "Estimating…"),
+  finished(reply) {
+    estimateButton.disabled = false;
+    if ("message" in reply) {
+      showEstimate(undefined);
+      status("estimate-status", `The estimate failed: ${reply.message}`);
+      return;
+    }
+    const { estimate } = reply;
+    showEstimate(estimate);
+    const skipped =
+      skippedMeets > 0
+        ? ` Skipped ${count.format(skippedMeets)} ${skippedMeets === 1 ? "line" : "lines"} that were not a raw meet with attempts.`
+        : "";
+    status(
+      "estimate-status",
+      `Expected maxes today, getting ${format.percent(Math.abs(estimate.yearlyProgress))} ${estimate.yearlyProgress < 0 ? "weaker" : "stronger"} a year.${skipped}`,
+    );
+  },
+});
+
+estimateButton.addEventListener("click", () => {
+  const { meets, skipped } = parsePastMeets(pastMeets.value);
+  skippedMeets = skipped;
+  if (meets.length === 0) {
+    showEstimate(undefined);
+    status(
+      "estimate-status",
+      "No raw meet with attempts found. Check the format above.",
+    );
+    return;
+  }
+  estimateButton.disabled = true;
+  submitEstimate(buildEstimateRequest(readValues(), meets, today()));
+});
+
+useEstimateButton.addEventListener("click", () => {
+  for (const [name, value] of estimatedValues)
+    input(name).valueAsNumber = value;
+  update();
+});
+
+form.addEventListener("input", (event) => {
+  if (event.target === pastMeets) return;
   if (stopSearch) {
     stopSearch();
     searchEnded("Search cancelled because the inputs changed.");
