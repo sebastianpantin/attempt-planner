@@ -1,10 +1,12 @@
+use std::fmt;
+
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, StandardNormal};
 
 use crate::lift::{Lift, PerLift};
 use crate::model::{DayForm, MakeRateCurve};
-use crate::plan::LiftPlan;
+use crate::plan::{LiftPlan, PlanStep};
 use crate::rules::{ATTEMPTS_PER_LIFT, BAR, RuleViolation, Weight, best_attempt};
 
 pub const MAX_SIMULATIONS: u32 = 1_000_000;
@@ -31,10 +33,74 @@ pub struct EvaluateInput {
     pub seed: u64,
 }
 
+/// The input a problem belongs to, so a UI can mark it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+pub enum InputField {
+    ExpectedMax,
+    Curve,
+    Opener,
+    Second,
+    Third,
+    DayForm,
+    Simulations,
+    Goal,
+}
+
+impl From<PlanStep> for InputField {
+    fn from(step: PlanStep) -> Self {
+        match step {
+            PlanStep::Opener => Self::Opener,
+            PlanStep::Second => Self::Second,
+            PlanStep::Third => Self::Third,
+        }
+    }
+}
+
+/// A stable name for each kind of problem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+pub enum ProblemCode {
+    InvalidWeight,
+    BelowBar,
+    TooHeavy,
+    NotLoadable,
+    Lighter,
+    NoIncreaseAfterMake,
+    TooManyAttempts,
+    ExpectedMaxBelowBar,
+    InvalidCurve,
+    InvalidDayForm,
+    SimulationsOutOfRange,
+}
+
+impl From<RuleViolation> for ProblemCode {
+    fn from(violation: RuleViolation) -> Self {
+        match violation {
+            RuleViolation::TooManyAttempts => Self::TooManyAttempts,
+            RuleViolation::BelowBar { .. } => Self::BelowBar,
+            RuleViolation::TooHeavy { .. } => Self::TooHeavy,
+            RuleViolation::NotLoadable { .. } => Self::NotLoadable,
+            RuleViolation::Lighter { .. } => Self::Lighter,
+            RuleViolation::NoIncreaseAfterMake { .. } => Self::NoIncreaseAfterMake,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputProblem {
+    /// A weight given in kg that is negative or not a number.
+    InvalidWeight {
+        lift: Option<Lift>,
+        field: InputField,
+    },
     Plan {
         lift: Lift,
+        step: PlanStep,
         violation: RuleViolation,
     },
     ExpectedMaxBelowBar {
@@ -47,15 +113,82 @@ pub enum InputProblem {
     SimulationsOutOfRange,
 }
 
+impl InputProblem {
+    pub fn lift(&self) -> Option<Lift> {
+        match *self {
+            Self::InvalidWeight { lift, .. } => lift,
+            Self::Plan { lift, .. }
+            | Self::ExpectedMaxBelowBar { lift }
+            | Self::InvalidCurve { lift } => Some(lift),
+            Self::InvalidDayForm | Self::SimulationsOutOfRange => None,
+        }
+    }
+
+    pub fn field(&self) -> InputField {
+        match *self {
+            Self::InvalidWeight { field, .. } => field,
+            Self::Plan { step, .. } => step.into(),
+            Self::ExpectedMaxBelowBar { .. } => InputField::ExpectedMax,
+            Self::InvalidCurve { .. } => InputField::Curve,
+            Self::InvalidDayForm => InputField::DayForm,
+            Self::SimulationsOutOfRange => InputField::Simulations,
+        }
+    }
+
+    pub fn code(&self) -> ProblemCode {
+        match *self {
+            Self::InvalidWeight { .. } => ProblemCode::InvalidWeight,
+            Self::Plan { violation, .. } => violation.into(),
+            Self::ExpectedMaxBelowBar { .. } => ProblemCode::ExpectedMaxBelowBar,
+            Self::InvalidCurve { .. } => ProblemCode::InvalidCurve,
+            Self::InvalidDayForm => ProblemCode::InvalidDayForm,
+            Self::SimulationsOutOfRange => ProblemCode::SimulationsOutOfRange,
+        }
+    }
+}
+
+impl fmt::Display for InputProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidWeight { .. } => f.write_str("not a valid weight in kg"),
+            Self::Plan { violation, .. } => violation.fmt(f),
+            Self::ExpectedMaxBelowBar { .. } => {
+                write!(f, "expected max is lighter than the {BAR} bar")
+            }
+            Self::InvalidCurve { .. } => {
+                f.write_str("make-rate curve needs a positive, finite midpoint and steepness")
+            }
+            Self::InvalidDayForm => write!(
+                f,
+                "day-form spread must be between 0 and {} and correlation between 0 and 1",
+                DayForm::MAX_SPREAD
+            ),
+            Self::SimulationsOutOfRange => {
+                write!(f, "simulations must be between 1 and {MAX_SIMULATIONS}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InputProblem {}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct LiftSummary {
     /// Chance of at least one made attempt.
     pub make_probability: f64,
     /// Average best attempt over the meets where at least one attempt was made.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
     pub expected_best_kg: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct Percentiles {
     pub p10: f64,
     pub p50: f64,
@@ -64,20 +197,32 @@ pub struct Percentiles {
 
 /// Monte Carlo standard errors of the matching estimates in [`Evaluation`].
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct StandardErrors {
     pub bomb_out_probability: f64,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
     pub goal_probability: Option<f64>,
     pub expected_total_kg: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct Evaluation {
     pub bomb_out_probability: f64,
-    /// Chance of a total at or above the goal. `None` when no goal was given.
+    /// Chance of a total at or above the goal. Absent when no goal was given.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
     pub goal_probability: Option<f64>,
     /// Average total, counting a bomb-out as 0.
     pub expected_total_kg: f64,
     /// Average total over the meets without a bomb-out.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "tsify", tsify(optional))]
     pub expected_total_without_bomb_out_kg: Option<f64>,
     /// Percentiles of the total, counting a bomb-out as 0.
     pub total_percentiles_kg: Percentiles,
@@ -182,7 +327,11 @@ fn plan_problems(plans: &PerLift<LiftPlan>) -> Vec<InputProblem> {
         .flat_map(|(lift, plan)| {
             plan.problems()
                 .into_iter()
-                .map(move |violation| InputProblem::Plan { lift, violation })
+                .map(move |(step, violation)| InputProblem::Plan {
+                    lift,
+                    step,
+                    violation,
+                })
         })
         .collect()
 }
@@ -463,8 +612,89 @@ mod tests {
                 InputProblem::SimulationsOutOfRange,
                 InputProblem::Plan {
                     lift: Lift::Squat,
+                    step: PlanStep::Opener,
                     violation: RuleViolation::NotLoadable { attempt: 1 }
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn problems_name_their_lift_field_and_code() {
+        let problems = [
+            InputProblem::InvalidWeight {
+                lift: None,
+                field: InputField::Goal,
+            },
+            InputProblem::Plan {
+                lift: Lift::Bench,
+                step: PlanStep::Third,
+                violation: RuleViolation::NoIncreaseAfterMake { attempt: 3 },
+            },
+            InputProblem::ExpectedMaxBelowBar {
+                lift: Lift::Deadlift,
+            },
+            InputProblem::InvalidCurve { lift: Lift::Squat },
+            InputProblem::InvalidDayForm,
+            InputProblem::SimulationsOutOfRange,
+        ];
+        let described = problems.map(|p| (p.lift(), p.field(), p.code()));
+        assert_eq!(
+            described,
+            [
+                (None, InputField::Goal, ProblemCode::InvalidWeight),
+                (
+                    Some(Lift::Bench),
+                    InputField::Third,
+                    ProblemCode::NoIncreaseAfterMake
+                ),
+                (
+                    Some(Lift::Deadlift),
+                    InputField::ExpectedMax,
+                    ProblemCode::ExpectedMaxBelowBar
+                ),
+                (
+                    Some(Lift::Squat),
+                    InputField::Curve,
+                    ProblemCode::InvalidCurve
+                ),
+                (None, InputField::DayForm, ProblemCode::InvalidDayForm),
+                (
+                    None,
+                    InputField::Simulations,
+                    ProblemCode::SimulationsOutOfRange
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn problems_read_as_sentences() {
+        let messages = [
+            InputProblem::InvalidWeight {
+                lift: Some(Lift::Squat),
+                field: InputField::Opener,
+            },
+            InputProblem::Plan {
+                lift: Lift::Squat,
+                step: PlanStep::Opener,
+                violation: RuleViolation::BelowBar { attempt: 1 },
+            },
+            InputProblem::ExpectedMaxBelowBar { lift: Lift::Bench },
+            InputProblem::InvalidCurve { lift: Lift::Bench },
+            InputProblem::InvalidDayForm,
+            InputProblem::SimulationsOutOfRange,
+        ]
+        .map(|problem| problem.to_string());
+        assert_eq!(
+            messages,
+            [
+                "not a valid weight in kg",
+                "attempt 1 is lighter than the 20 kg bar",
+                "expected max is lighter than the 20 kg bar",
+                "make-rate curve needs a positive, finite midpoint and steepness",
+                "day-form spread must be between 0 and 0.5 and correlation between 0 and 1",
+                "simulations must be between 1 and 1000000",
             ]
         );
     }

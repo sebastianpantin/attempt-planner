@@ -1,6 +1,10 @@
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub enum Lift {
     Squat,
     Bench,
@@ -23,6 +27,9 @@ impl fmt::Display for Lift {
 
 /// One value per lift, in meet order.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct PerLift<T> {
     pub squat: T,
     pub bench: T,

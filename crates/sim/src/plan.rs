@@ -8,6 +8,14 @@ pub struct Jumps {
     pub after_miss: Weight,
 }
 
+/// Which part of a lift plan an input or problem belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanStep {
+    Opener,
+    Second,
+    Third,
+}
+
 /// The plan for one lift: an opener, then jump rules for the 2nd and 3rd attempts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiftPlan {
@@ -17,32 +25,36 @@ pub struct LiftPlan {
 }
 
 impl LiftPlan {
-    fn later_attempts(&self) -> [(usize, Jumps); ATTEMPTS_PER_LIFT - 1] {
-        [(2, self.second), (3, self.third)]
+    fn later_attempts(&self) -> [(PlanStep, usize, Jumps); ATTEMPTS_PER_LIFT - 1] {
+        [
+            (PlanStep::Second, 2, self.second),
+            (PlanStep::Third, 3, self.third),
+        ]
     }
 
-    /// Every way this plan could break the attempt rules. Empty when the plan is valid.
-    pub fn problems(&self) -> Vec<RuleViolation> {
+    /// Every way this plan could break the attempt rules, with the step it comes from.
+    /// Empty when the plan is valid.
+    pub fn problems(&self) -> Vec<(PlanStep, RuleViolation)> {
         let mut problems = Vec::new();
         if self.opener < BAR {
-            problems.push(RuleViolation::BelowBar { attempt: 1 });
+            problems.push((PlanStep::Opener, RuleViolation::BelowBar { attempt: 1 }));
         } else if !self.opener.is_loadable() {
-            problems.push(RuleViolation::NotLoadable { attempt: 1 });
+            problems.push((PlanStep::Opener, RuleViolation::NotLoadable { attempt: 1 }));
         }
         let mut heaviest = self.opener;
         if heaviest > HEAVIEST {
-            problems.push(RuleViolation::TooHeavy { attempt: 1 });
+            problems.push((PlanStep::Opener, RuleViolation::TooHeavy { attempt: 1 }));
         }
-        for (attempt, jumps) in self.later_attempts() {
+        for (step, attempt, jumps) in self.later_attempts() {
             heaviest = heaviest + jumps.after_make.max(jumps.after_miss);
             if heaviest > HEAVIEST {
-                problems.push(RuleViolation::TooHeavy { attempt });
+                problems.push((step, RuleViolation::TooHeavy { attempt }));
             }
             if jumps.after_make == Weight::ZERO {
-                problems.push(RuleViolation::NoIncreaseAfterMake { attempt });
+                problems.push((step, RuleViolation::NoIncreaseAfterMake { attempt }));
             }
             if !jumps.after_make.is_loadable() || !jumps.after_miss.is_loadable() {
-                problems.push(RuleViolation::NotLoadable { attempt });
+                problems.push((step, RuleViolation::NotLoadable { attempt }));
             }
         }
         problems
@@ -61,7 +73,7 @@ impl LiftPlan {
             made: roll < curve.make_probability(weight, day_max_kg),
         };
         let mut attempts = [take(self.opener, rolls[0]); ATTEMPTS_PER_LIFT];
-        for (index, (_, jumps)) in (1..).zip(self.later_attempts()) {
+        for (index, (_, _, jumps)) in (1..).zip(self.later_attempts()) {
             let previous = attempts[index - 1];
             let jump = if previous.made {
                 jumps.after_make
@@ -137,10 +149,13 @@ mod tests {
         assert_eq!(
             plan.problems(),
             [
-                RuleViolation::BelowBar { attempt: 1 },
-                RuleViolation::NoIncreaseAfterMake { attempt: 2 },
-                RuleViolation::NotLoadable { attempt: 2 },
-                RuleViolation::NotLoadable { attempt: 3 },
+                (PlanStep::Opener, RuleViolation::BelowBar { attempt: 1 }),
+                (
+                    PlanStep::Second,
+                    RuleViolation::NoIncreaseAfterMake { attempt: 2 }
+                ),
+                (PlanStep::Second, RuleViolation::NotLoadable { attempt: 2 }),
+                (PlanStep::Third, RuleViolation::NotLoadable { attempt: 3 }),
             ]
         );
     }
@@ -161,8 +176,8 @@ mod tests {
         assert_eq!(
             plan.problems(),
             [
-                RuleViolation::TooHeavy { attempt: 2 },
-                RuleViolation::TooHeavy { attempt: 3 }
+                (PlanStep::Second, RuleViolation::TooHeavy { attempt: 2 }),
+                (PlanStep::Third, RuleViolation::TooHeavy { attempt: 3 })
             ]
         );
     }
@@ -173,6 +188,9 @@ mod tests {
             opener: kg(181.0),
             ..plan()
         };
-        assert_eq!(plan.problems(), [RuleViolation::NotLoadable { attempt: 1 }]);
+        assert_eq!(
+            plan.problems(),
+            [(PlanStep::Opener, RuleViolation::NotLoadable { attempt: 1 })]
+        );
     }
 }

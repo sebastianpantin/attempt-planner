@@ -3,6 +3,10 @@ use crate::rules::Weight;
 
 /// Chance of making a lift as a logistic function of load ÷ day max.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct MakeRateCurve {
     /// The load ÷ day max ratio at which the make rate is 50%.
     pub ratio_at_half: f64,
@@ -24,6 +28,10 @@ impl MakeRateCurve {
 
 /// How much a lifter's max moves on meet day.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct DayForm {
     /// Standard deviation of the day max, as a fraction of the expected max.
     pub spread: f64,
