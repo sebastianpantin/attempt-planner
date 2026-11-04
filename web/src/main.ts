@@ -10,7 +10,12 @@ import type {
 import { type AttemptNode, attemptTree } from "./attempt-tree.ts";
 import { describePoint, drawTradeoff } from "./chart.ts";
 import type { Failed } from "./engine.ts";
-import { EXAMPLE } from "./example.ts";
+import {
+  CALIBRATIONS,
+  calibrationValues,
+  EXAMPLE,
+  type Sex,
+} from "./example.ts";
 import * as format from "./format.ts";
 import {
   buildRequest,
@@ -416,6 +421,9 @@ cancelButton.addEventListener("click", () => {
   searchEnded("Search cancelled. The plan is unchanged.");
 });
 
+const sexSelect = form.elements.namedItem("sex") as HTMLSelectElement;
+const sex = () => sexSelect.value as Sex;
+
 const pastMeets = byId("past-meets") as HTMLTextAreaElement;
 const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
 const useEstimateButton = byId("use-estimate") as HTMLButtonElement;
@@ -475,7 +483,14 @@ estimateButton.addEventListener("click", () => {
     return;
   }
   estimateButton.disabled = true;
-  submitEstimate(buildEstimateRequest(readValues(), meets, today()));
+  submitEstimate(
+    buildEstimateRequest(
+      readValues(),
+      meets,
+      today(),
+      CALIBRATIONS[sex()].typicalOpener,
+    ),
+  );
 });
 
 useEstimateButton.addEventListener("click", () => {
@@ -486,6 +501,11 @@ useEstimateButton.addEventListener("click", () => {
 
 form.addEventListener("input", (event) => {
   if (event.target === pastMeets) return;
+  if (event.target === sexSelect) {
+    for (const [name, value] of calibrationValues(sex())) {
+      input(name).valueAsNumber = value;
+    }
+  }
   if (stopSearch) {
     stopSearch();
     searchEnded("Search cancelled because the inputs changed.");

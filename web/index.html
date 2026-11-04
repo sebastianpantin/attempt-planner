@@ -21,6 +21,18 @@
           <fieldset>
             <legend>Meet</legend>
             <label>
+              Lifter
+              <select name="sex">
+                <option value="any">Any</option>
+                <option value="men">Men</option>
+                <option value="women">Women</option>
+              </select>
+            </label>
+            <p class="hint">
+              Sets the make-rate and day-form numbers under Advanced to those
+              fitted to that group's meets.
+            </p>
+            <label>
               Goal total (kg, optional)
               <input name="goalKg" type="number" min="0" step="2.5" />
             </label>
@@ -94,7 +106,7 @@
               </p>
               <label>
                 Day-to-day spread
-                <input name="spreadPercent" type="number" min="0" step="0.5" />
+                <input name="spreadPercent" type="number" min="0" step="0.1" />
                 %
               </label>
               <label>
@@ -103,7 +115,7 @@
                   name="maxUncertaintyPercent"
                   type="number"
                   min="0"
-                  step="0.5"
+                  step="0.1"
                 />
                 %
               </label>
@@ -114,7 +126,7 @@
                   type="number"
                   min="0"
                   max="1"
-                  step="0.1"
+                  step="0.01"
                 />
               </label>
             </fieldset>

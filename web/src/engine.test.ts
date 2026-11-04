@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, expect, it } from "vitest";
 import { initSync } from "../pkg/attempt_sim_wasm.js";
 import { answer, failed, search } from "./engine.ts";
-import { EXAMPLE } from "./example.ts";
+import { CALIBRATIONS, EXAMPLE } from "./example.ts";
 import {
   buildRequest,
   buildSearchRequest,
@@ -104,7 +104,12 @@ it("estimates maxes from past meets", () => {
   );
   const reply = answer({
     kind: "estimate",
-    request: buildEstimateRequest(EXAMPLE, meets, 20_300),
+    request: buildEstimateRequest(
+      EXAMPLE,
+      meets,
+      20_300,
+      CALIBRATIONS.any.typicalOpener,
+    ),
   });
   if (reply.kind !== "estimated") throw new Error(JSON.stringify(reply));
   const { squat, bench } = reply.estimate.lifts;
@@ -117,7 +122,12 @@ it("estimates maxes from past meets", () => {
 it("fails an estimate without attempts", () => {
   const reply = answer({
     kind: "estimate",
-    request: buildEstimateRequest(EXAMPLE, [], 20_300),
+    request: buildEstimateRequest(
+      EXAMPLE,
+      [],
+      20_300,
+      CALIBRATIONS.any.typicalOpener,
+    ),
   });
   expect(reply).toEqual({
     kind: "failed",
