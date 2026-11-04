@@ -1,9 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
-use attempt_sim_wasm::dto::{EvaluateRequest, SearchRequest, TradeoffRequest};
 use attempt_sim_wasm::{PlanSearch, estimate_maxes, evaluate, single_changes, tradeoff};
 use js_sys::JSON;
-use tsify::Ts;
+use tsify::{Ts, Tsify};
+use wasm_bindgen::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 const REQUEST: &str = r#"{
@@ -24,13 +24,20 @@ const REQUEST: &str = r#"{
     "seed": 7
 }"#;
 
-fn parse(json: &str) -> Ts<EvaluateRequest> {
+fn parse<T: Tsify>(json: &str) -> Ts<T> {
     Ts::new_unchecked(JSON::parse(json).unwrap())
 }
 
+fn stringify<T: Tsify>(value: Ts<T>) -> String {
+    JSON::stringify(&JsValue::from(value)).unwrap().into()
+}
+
+fn with_fields(fields: &str) -> String {
+    REQUEST.replace(r#""seed": 7"#, &format!(r#""seed": 7, {fields}"#))
+}
+
 fn call(json: &str) -> String {
-    let response = evaluate(parse(json)).unwrap();
-    JSON::stringify(&response.js_value()).unwrap().into()
+    stringify(evaluate(parse(json)).unwrap())
 }
 
 #[wasm_bindgen_test]
@@ -53,7 +60,7 @@ fn returns_an_evaluation_with_camel_case_fields() {
 fn leaves_out_goal_figures_without_a_goal() {
     let json = call(REQUEST);
     assert!(!json.contains("goalProbability"), "{json}");
-    let with_goal = call(&REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "goalKg": 550"#));
+    let with_goal = call(&with_fields(r#""goalKg": 550"#));
     assert!(with_goal.contains(r#""goalProbability":1"#), "{with_goal}");
 }
 
@@ -73,12 +80,7 @@ fn throws_on_input_of_the_wrong_shape() {
 
 #[wasm_bindgen_test]
 fn sweeps_the_plan_family_with_camel_case_fields() {
-    let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "goalKg": 550"#);
-    let response = tradeoff(Ts::<TradeoffRequest>::new_unchecked(
-        JSON::parse(&request).unwrap(),
-    ))
-    .unwrap();
-    let json: String = JSON::stringify(&response.js_value()).unwrap().into();
+    let json = stringify(tradeoff(parse(&with_fields(r#""goalKg": 550"#))).unwrap());
     assert!(
         json.starts_with(
             r#"{"kind":"swept","points":[{"shape":{"openerPercent":85,"secondPercent":93,"thirdPercent":97},"plans":{"squat":{"openerKg":170,"second":{"afterMakeKg":15,"afterMissKg":0}"#
@@ -91,29 +93,16 @@ fn sweeps_the_plan_family_with_camel_case_fields() {
 
 #[wasm_bindgen_test]
 fn the_sweep_reads_the_bomb_out_cap() {
-    let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "bombOutCap": 3"#);
-    let response = tradeoff(Ts::<TradeoffRequest>::new_unchecked(
-        JSON::parse(&request).unwrap(),
-    ))
-    .unwrap();
-    let json: String = JSON::stringify(&response.js_value()).unwrap().into();
+    let json = stringify(tradeoff(parse(&with_fields(r#""bombOutCap": 3"#))).unwrap());
     assert!(json.contains(r#""field":"bombOutCap""#), "{json}");
-}
-
-fn search_request(json: &str) -> Ts<SearchRequest> {
-    Ts::new_unchecked(JSON::parse(json).unwrap())
 }
 
 #[wasm_bindgen_test]
 fn a_search_steps_until_done() {
-    let request = REQUEST.replace(
-        r#""seed": 7"#,
-        r#""seed": 7, "goalKg": 560, "bombOutCap": 0.05"#,
-    );
-    let mut search = PlanSearch::new(search_request(&request)).unwrap();
+    let request = with_fields(r#""goalKg": 560, "bombOutCap": 0.05"#);
+    let mut search = PlanSearch::new(parse(&request)).unwrap();
     let json = loop {
-        let progress = search.step().unwrap();
-        let json: String = JSON::stringify(&progress.js_value()).unwrap().into();
+        let json = stringify(search.step().unwrap());
         if json.contains(r#""done":true"#) {
             break json;
         }
@@ -125,8 +114,7 @@ fn a_search_steps_until_done() {
 
 #[wasm_bindgen_test]
 fn a_search_with_an_invalid_cap_throws_its_problem() {
-    let request = REQUEST.replace(r#""seed": 7"#, r#""seed": 7, "bombOutCap": 3"#);
-    assert!(PlanSearch::new(search_request(&request)).is_err());
+    assert!(PlanSearch::new(parse(&with_fields(r#""bombOutCap": 3"#))).is_err());
 }
 
 const PAST_MEETS: &str = r#"{
@@ -150,9 +138,7 @@ const PAST_MEETS: &str = r#"{
 
 #[wasm_bindgen_test]
 fn estimates_maxes_from_past_meets() {
-    let request = Ts::new_unchecked(JSON::parse(PAST_MEETS).unwrap());
-    let estimate = estimate_maxes(request).unwrap();
-    let json: String = JSON::stringify(&estimate.js_value()).unwrap().into();
+    let json = stringify(estimate_maxes(parse(PAST_MEETS)).unwrap());
     assert!(
         json.starts_with(r#"{"lifts":{"squat":{"expectedMaxKg":"#),
         "{json}"
@@ -164,14 +150,12 @@ fn estimates_maxes_from_past_meets() {
 #[wasm_bindgen_test]
 fn estimating_from_a_negative_weight_throws() {
     let json = PAST_MEETS.replace(r#""kg": 180"#, r#""kg": -180"#);
-    let request = Ts::new_unchecked(JSON::parse(&json).unwrap());
-    assert!(estimate_maxes(request).is_err());
+    assert!(estimate_maxes(parse(&json)).is_err());
 }
 
 #[wasm_bindgen_test]
 fn lists_single_changes_with_camel_case_fields() {
-    let response = single_changes(search_request(REQUEST)).unwrap();
-    let json: String = JSON::stringify(&response.js_value()).unwrap().into();
+    let json = stringify(single_changes(parse(REQUEST)).unwrap());
     assert!(
         json.starts_with(r#"{"kind":"changed","current":{"plans":"#),
         "{json}"

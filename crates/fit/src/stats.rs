@@ -38,16 +38,15 @@ pub fn attempt_stats(meets: impl IntoIterator<Item = [f64; 3]>) -> Option<Attemp
         if !PLAUSIBLE_JUMP.contains(&to_second) || !PLAUSIBLE_JUMP.contains(&to_third) {
             continue;
         }
-        let made = attempts.map(|a| a > 0.0);
-        let [first_made, second_made, third_made] = made.map(usize::from);
+        let [first_made, second_made, third_made] = attempts.map(|a| usize::from(a > 0.0));
         count += 1;
         openers_made += first_made;
         second_attempts[first_made] += 1;
         second_makes[first_made] += second_made;
         third_attempts[second_made] += 1;
         third_makes[second_made] += third_made;
-        second[usize::from(made[0])].push(to_second);
-        third[usize::from(made[1])].push(to_third);
+        second[first_made].push(to_second);
+        third[second_made].push(to_third);
     }
     let [second_after_miss, second_after_make] = second.map(median);
     let [third_after_miss, third_after_make] = third.map(median);
@@ -83,7 +82,6 @@ fn median(mut values: Vec<f64>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::calibrate::MakeRates;
 
     #[test]
     fn make_rates_are_split_by_the_attempt_before() {

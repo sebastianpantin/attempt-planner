@@ -28,11 +28,8 @@ pub fn tradeoff(request: Ts<dto::TradeoffRequest>) -> Result<Ts<dto::TradeoffRes
 pub fn estimate_maxes(
     request: Ts<attempt_sim::past_meets::MaxEstimateInput>,
 ) -> Result<Ts<attempt_sim::past_meets::MaxEstimate>, JsError> {
-    let estimate =
-        attempt_sim::past_meets::estimate_maxes(&request.to_rust()?).map_err(|problems| {
-            let messages: Vec<_> = problems.iter().map(ToString::to_string).collect();
-            JsError::new(&messages.join("; "))
-        })?;
+    let estimate = attempt_sim::past_meets::estimate_maxes(&request.to_rust()?)
+        .map_err(|problems| joined_error(problems.iter().map(ToString::to_string)))?;
     Ok(estimate.into_ts()?)
 }
 
@@ -47,6 +44,10 @@ pub fn single_changes(
     Ok(dto::single_changes(&request.to_rust()?).into_ts()?)
 }
 
+fn joined_error(messages: impl Iterator<Item = String>) -> JsError {
+    JsError::new(&messages.collect::<Vec<_>>().join("; "))
+}
+
 /// A plan search the caller steps through, so it can report progress and stop early.
 #[wasm_bindgen]
 pub struct PlanSearch(attempt_sim::search::Search);
@@ -59,10 +60,7 @@ impl PlanSearch {
     pub fn new(request: Ts<dto::SearchRequest>) -> Result<PlanSearch, JsError> {
         dto::start_search(&request.to_rust()?)
             .map(PlanSearch)
-            .map_err(|problems| {
-                let messages: Vec<_> = problems.into_iter().map(|p| p.message).collect();
-                JsError::new(&messages.join("; "))
-            })
+            .map_err(|problems| joined_error(problems.into_iter().map(|p| p.message)))
     }
 
     /// Tries the next setting and returns the best plans so far.

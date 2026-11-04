@@ -44,15 +44,13 @@ impl MeetToMeet {
 fn bests(attempts: &PerLift<[f64; 3]>) -> Option<PerLift<f64>> {
     let mut bests = PerLift::from_fn(|_| 0.0);
     for (lift, attempts) in attempts.iter() {
-        if !attempts.iter().all(|kg| kg.is_finite() && *kg != 0.0) {
+        let best = attempts.iter().copied().fold(0.0, f64::max);
+        if best == 0.0 || !attempts.iter().all(|kg| kg.is_finite() && *kg != 0.0) {
             return None;
         }
-        *bests.get_mut(lift) = attempts.iter().copied().fold(0.0, f64::max);
+        *bests.get_mut(lift) = best;
     }
-    Lift::ALL
-        .iter()
-        .all(|&lift| *bests.get(lift) > 0.0)
-        .then_some(bests)
+    Some(bests)
 }
 
 fn median(values: &mut [f64]) -> f64 {
@@ -96,10 +94,7 @@ pub fn meet_to_meet(entries: &[Entry]) -> Option<MeetToMeet> {
     meets.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
 
     let mut changes = PerLift::from_fn(|_| Vec::new());
-    for pair in meets.windows(2) {
-        let [(lifter, day, before), (next_lifter, next_day, after)] = pair else {
-            unreachable!("windows of two")
-        };
+    for [(lifter, day, before), (next_lifter, next_day, after)] in meets.array_windows() {
         if lifter != next_lifter || !DAYS_BETWEEN_MEETS.contains(&(next_day - day)) {
             continue;
         }
