@@ -73,7 +73,7 @@ export const INPUT_NAMES: InputName[] = [
   ...MEET_FIELDS,
 ];
 
-const perLift = <T>(value: (lift: Lift) => T): PerLift<T> => ({
+export const perLift = <T>(value: (lift: Lift) => T): PerLift<T> => ({
   squat: value("squat"),
   bench: value("bench"),
   deadlift: value("deadlift"),

@@ -270,7 +270,8 @@ const strong = (text: string) => element("b", "", text);
 function showPlans(values: FormValues) {
   const { plans } = buildRequest(values, false);
   for (const lift of LIFTS) {
-    const view = ladder(plans[lift], values[inputName(lift, "expectedMaxKg")]);
+    const maxKg = values[inputName(lift, "expectedMaxKg")];
+    const view = ladder(plans[lift], maxKg);
     byId(`${lift}-2nd`).textContent = view.secondKg;
     byId(`${lift}-3rd`).textContent = view.thirdKg;
     byId(`${lift}-share`).textContent = view.shareOfMax;
@@ -294,16 +295,22 @@ function showPlans(values: FormValues) {
         valueText(field, values[name]),
       );
     }
-    const warnings = aboveMaxWarnings(
-      plans[lift],
-      values[inputName(lift, "expectedMaxKg")],
-    );
+    const warnings = aboveMaxWarnings(plans[lift], maxKg);
     byId(`${lift}-warnings`).replaceChildren(
       ...warnings.map((warning) => element("li", "", warning)),
     );
     byId(`${lift}-over`).textContent =
       warnings.length > 0 ? "Attempt above your max" : "";
   }
+}
+
+function headedRow(...heading: (Node | string)[]) {
+  const row = element("tr");
+  const cell = element("th");
+  cell.scope = "row";
+  cell.append(...heading);
+  row.append(cell);
+  return row;
 }
 
 const setOrRemove = (target: Element, name: string, value: string) =>
@@ -389,11 +396,7 @@ function showEvaluation(
         strengthMissRate,
         technicalMissRate,
       } = evaluation.lifts[lift];
-      const row = document.createElement("tr");
-      const heading = document.createElement("th");
-      heading.scope = "row";
-      heading.textContent = LIFT_NAMES[lift].full;
-      row.append(heading);
+      const row = headedRow(LIFT_NAMES[lift].full);
       row.insertCell().textContent = format.percent(makeProbability);
       row.insertCell().textContent =
         medianBestKg === undefined ? "–" : format.kg(medianBestKg);
@@ -533,18 +536,14 @@ function showTradeoff() {
   byId("tradeoff-plans").replaceChildren(
     ...comparisonRows(points, bestForGoal).map(
       ({ point, label, bestForGoal }) => {
-        const row = document.createElement("tr");
-        const heading = document.createElement("th");
-        heading.scope = "row";
         const title = element("span", "plan-label", label);
         if (bestForGoal) title.append(" ", element("span", "badge", bestLabel));
-        heading.append(
+        const row = headedRow(
           title,
           ...[shapeLabel(point.shape), ...planLines(point.plans)].flatMap(
             (text) => [" ", element("span", "plan-detail", text)],
           ),
         );
-        row.append(heading);
         for (const [heading, text] of [
           ["Bomb-out", format.percent(point.bombOutProbability)],
           ["Average total", format.kg(point.expectedTotalKg)],
@@ -879,21 +878,22 @@ form.addEventListener("input", (event) => {
   if (liftInput && isPlanField(liftInput.field)) handEdited.add(liftInput.lift);
   if (liftInput?.field === "expectedMaxKg") followMax(liftInput.lift);
   if (name === "sex") {
+    const chosen = sex();
     const { changes, kept } = switchCalibration(
       readValues(),
       calibratedSex,
-      sex(),
+      chosen,
     );
     for (const [lift, shape] of regroupedShapes(
       shapes,
       CALIBRATIONS[calibratedSex].typicalOpener,
-      CALIBRATIONS[sex()].typicalOpener,
+      CALIBRATIONS[chosen].typicalOpener,
     )) {
       if (handEdited.has(lift)) continue;
       shapes[lift] = shape;
       followMax(lift);
     }
-    calibratedSex = sex();
+    calibratedSex = chosen;
     for (const [name, value] of changes) setInput(name, value);
     status("sex-status", describeKept(kept));
   }

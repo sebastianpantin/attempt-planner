@@ -7,7 +7,13 @@ import type {
   PastMeet,
 } from "../pkg/attempt_sim_wasm.js";
 import { kg, LIFT_NAMES, percent } from "./format.ts";
-import { type FormValues, type InputName, inputName, LIFTS } from "./inputs.ts";
+import {
+  type FormValues,
+  type InputName,
+  inputName,
+  LIFTS,
+  perLift,
+} from "./inputs.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const ATTEMPT_COLUMNS: Record<Lift, string> = {
@@ -41,8 +47,8 @@ export const today = (now = new Date()) =>
 
 /** An attempt as OpenPowerlifting records it: missed negative, not taken 0 or blank. */
 function attempt(text: string): PastAttempt | undefined | "invalid" {
-  if (text.trim() === "" || Number(text) === 0) return undefined;
   const kg = Number(text);
+  if (text.trim() === "" || kg === 0) return undefined;
   return Number.isFinite(kg) ? { kg: Math.abs(kg), made: kg > 0 } : "invalid";
 }
 
@@ -147,17 +153,13 @@ export function buildEstimateRequest(
   onDay: number,
   typicalOpener: MaxEstimateInput["typicalOpener"],
 ): MaxEstimateInput {
-  const curve = (lift: Lift) => ({
-    ratioAtHalf: values[inputName(lift, "ratioAtHalf")],
-    steepness: values[inputName(lift, "steepness")],
-    technicalMissChance: values[inputName(lift, "technicalMissPercent")] / 100,
-  });
   return {
-    curves: {
-      squat: curve("squat"),
-      bench: curve("bench"),
-      deadlift: curve("deadlift"),
-    },
+    curves: perLift((lift) => ({
+      ratioAtHalf: values[inputName(lift, "ratioAtHalf")],
+      steepness: values[inputName(lift, "steepness")],
+      technicalMissChance:
+        values[inputName(lift, "technicalMissPercent")] / 100,
+    })),
     typicalOpener,
     dayFormSpread: values.spreadPercent / 100,
     meets,
@@ -193,17 +195,12 @@ export function estimateValues(estimate: MaxEstimate): [InputName, number][] {
 
 /** Each lift's heaviest made attempt in the meets, `undefined` with none made. */
 export function bestMade(meets: PastMeet[]): Record<Lift, number | undefined> {
-  const best = (lift: Lift) => {
+  return perLift((lift) => {
     const made = meets.flatMap((meet) =>
       meet.attempts[lift].filter((a) => a.made).map((a) => a.kg),
     );
     return made.length > 0 ? Math.max(...made) : undefined;
-  };
-  return {
-    squat: best("squat"),
-    bench: best("bench"),
-    deadlift: best("deadlift"),
-  };
+  });
 }
 
 /** A lift's estimate next to its best made lift, saying when the estimate is above it. */
