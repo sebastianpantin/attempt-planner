@@ -1,6 +1,5 @@
 import type {
   EvaluateRequest,
-  InputField,
   Lift,
   LiftPlanKg,
   PerLift,
@@ -36,6 +35,18 @@ const MEET_FIELDS = [
 ] as const;
 
 export type LiftField = (typeof LIFT_FIELDS)[number];
+
+/** The jumps to the 2nd and 3rd attempts, after a make and after a miss. */
+export const JUMP_FIELDS = [
+  "secondAfterMakeKg",
+  "secondAfterMissKg",
+  "thirdAfterMakeKg",
+  "thirdAfterMissKg",
+] as const satisfies LiftField[];
+
+/** Jumps after a miss, where 0 repeats the missed weight. */
+export const isRepeatJump = (field: LiftField) =>
+  field === "secondAfterMissKg" || field === "thirdAfterMissKg";
 export type MeetField = (typeof MEET_FIELDS)[number];
 export type InputName = `${Lift}-${LiftField}` | MeetField;
 
@@ -44,6 +55,15 @@ export type FormValues = Record<InputName, number>;
 
 export const inputName = (lift: Lift, field: LiftField): InputName =>
   `${lift}-${field}`;
+
+const LIFT_INPUTS = new Map<string, { lift: Lift; field: LiftField }>(
+  LIFTS.flatMap((lift) =>
+    LIFT_FIELDS.map((field) => [inputName(lift, field), { lift, field }]),
+  ),
+);
+
+/** The lift and field of a lift input's name, or `undefined` for any other name. */
+export const parseInputName = (name: string) => LIFT_INPUTS.get(name);
 
 export const INPUT_NAMES: InputName[] = [
   ...LIFTS.flatMap((lift) =>
@@ -142,48 +162,6 @@ export function planValues(plans: PerLift<LiftPlanKg>): [InputName, number][] {
   });
 }
 
-const PROBLEM_LIFT_FIELDS: Partial<Record<InputField, LiftField[]>> = {
-  expectedMax: ["expectedMaxKg"],
-  curve: ["ratioAtHalf", "steepness", "technicalMissPercent"],
-  opener: ["openerKg"],
-  second: ["secondAfterMakeKg", "secondAfterMissKg"],
-  third: ["thirdAfterMakeKg", "thirdAfterMissKg"],
-};
-
-const PROBLEM_MEET_FIELDS: Partial<Record<InputField, MeetField[]>> = {
-  goal: ["goalKg"],
-  dayForm: ["spreadPercent", "maxUncertaintyPercent", "correlation"],
-  bombOutCap: ["bombOutCapPercent"],
-};
-
-/** The inputs to mark for a problem the engine found. */
-export function inputsFor({ lift, field }: Problem): InputName[] {
-  if (lift) {
-    return (PROBLEM_LIFT_FIELDS[field] ?? []).map((f) => inputName(lift, f));
-  }
-  return PROBLEM_MEET_FIELDS[field] ?? [];
-}
-
-const FIELD_LABELS: Record<InputField, string> = {
-  expectedMax: "Expected max",
-  curve: "Make rate",
-  opener: "Opener",
-  second: "2nd attempt",
-  third: "3rd attempt",
-  dayForm: "Day form",
-  simulations: "Simulations",
-  goal: "Goal",
-  bombOutCap: "Bomb-out cap",
-};
-
-/** The cap is a percent on the page but a chance from 0 to 1 in the engine. */
-const PAGE_MESSAGES: Partial<Record<Problem["code"], string>> = {
-  invalidBombOutCap: "must be from 0 to 100%",
-};
-
 /** The sweep's problems that only it reports, so they are not listed twice. */
 export const sweepOnlyProblems = (problems: Problem[]) =>
   problems.filter((problem) => problem.field === "bombOutCap");
-
-export const describeProblem = ({ field, code, message }: Problem) =>
-  `${FIELD_LABELS[field]}: ${PAGE_MESSAGES[code] ?? message}`;

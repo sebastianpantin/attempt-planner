@@ -5,11 +5,10 @@ import {
   buildRequest,
   buildSearchRequest,
   buildTradeoffRequest,
+  parseInputName,
   planValues,
-  describeProblem,
   sweepOnlyProblems,
   INPUT_NAMES,
-  inputsFor,
   PRECISE_SIMULATIONS,
   QUICK_SIMULATIONS,
 } from "./inputs.ts";
@@ -78,63 +77,6 @@ describe("buildRequest", () => {
   });
 });
 
-describe("inputsFor", () => {
-  const problem = (
-    field: Problem["field"],
-    lift?: Problem["lift"],
-  ): Problem => ({
-    field,
-    code: "invalidWeight",
-    message: "",
-    ...(lift && { lift }),
-  });
-
-  it("marks the inputs of the lift and plan step", () => {
-    expect(inputsFor(problem("opener", "squat"))).toEqual(["squat-openerKg"]);
-    expect(inputsFor(problem("third", "deadlift"))).toEqual([
-      "deadlift-thirdAfterMakeKg",
-      "deadlift-thirdAfterMissKg",
-    ]);
-    expect(inputsFor(problem("curve", "bench"))).toEqual([
-      "bench-ratioAtHalf",
-      "bench-steepness",
-      "bench-technicalMissPercent",
-    ]);
-  });
-
-  it("marks meet-wide inputs", () => {
-    expect(inputsFor(problem("goal"))).toEqual(["goalKg"]);
-    expect(inputsFor(problem("dayForm"))).toEqual([
-      "spreadPercent",
-      "maxUncertaintyPercent",
-      "correlation",
-    ]);
-  });
-});
-
-describe("describeProblem", () => {
-  it("names the input before the engine's message", () => {
-    expect(
-      describeProblem({
-        lift: "squat",
-        field: "second",
-        code: "notLoadable",
-        message: "attempt 2 is not a multiple of 2.5 kg",
-      }),
-    ).toBe("2nd attempt: attempt 2 is not a multiple of 2.5 kg");
-  });
-
-  it("states the bomb-out cap in the page's percent units", () => {
-    expect(
-      describeProblem({
-        field: "bombOutCap",
-        code: "invalidBombOutCap",
-        message: "bomb-out cap must be a chance between 0 and 1",
-      }),
-    ).toBe("Bomb-out cap: must be from 0 to 100%");
-  });
-});
-
 it("keeps only the problems the sweep alone reports", () => {
   const problem = (field: Problem["field"]): Problem => ({
     field,
@@ -144,6 +86,16 @@ it("keeps only the problems the sweep alone reports", () => {
   expect(
     sweepOnlyProblems([problem("dayForm"), problem("bombOutCap")]),
   ).toEqual([problem("bombOutCap")]);
+});
+
+it("reads the lift and field from a lift input's name", () => {
+  expect(parseInputName("bench-openerKg")).toEqual({
+    lift: "bench",
+    field: "openerKg",
+  });
+  expect(parseInputName("goalKg")).toBeUndefined();
+  expect(parseInputName("sex")).toBeUndefined();
+  expect(parseInputName("bench-goalKg")).toBeUndefined();
 });
 
 it("lists every number input once", () => {

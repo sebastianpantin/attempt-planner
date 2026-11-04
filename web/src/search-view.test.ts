@@ -29,3 +29,31 @@ it("says when the search is done", () => {
     "Found in 3 rounds and filled in: 78.1% chance of reaching the goal, 553.2 kg average total, 4.8% bomb-out chance.",
   );
 });
+
+it("says when no plan keeps within the cap, and that the plan found is the safest", () => {
+  expect(describeSearch(progress({ done: true, round: 3 }), 0)).toBe(
+    "No plan keeps the bomb-out chance within 0%. This is the safest plan found: 78.1% chance of reaching the goal, 553.2 kg average total, 4.8% bomb-out chance.",
+  );
+});
+
+it("reports a plan within the cap as found", () => {
+  expect(describeSearch(progress({ done: true, round: 1 }), 0.05)).toBe(
+    "Found in 1 round and filled in: 78.1% chance of reaching the goal, 553.2 kg average total, 4.8% bomb-out chance.",
+  );
+});
+
+it("warns when a search with any risk allowed finds a plan that bombs out often", () => {
+  expect(
+    describeSearch(
+      progress({ done: true, round: 2, bombOutProbability: 0.155 }),
+    ),
+  ).toMatch(
+    /15\.5% bomb-out chance\. With any risk allowed, this plan bombs out often\./,
+  );
+  expect(
+    describeSearch(
+      progress({ done: true, round: 2, bombOutProbability: 0.155 }),
+      0.2,
+    ),
+  ).not.toMatch(/With any risk allowed/);
+});

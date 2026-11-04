@@ -266,7 +266,7 @@ pub struct ChangeInput {
     pub seed: u64,
 }
 
-/// One setting of one lift moved by a plate step, and the plans it gives.
+/// One setting of one lift moved by one or two plate steps, and the plans it gives.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Change {
     pub lift: Lift,
@@ -274,18 +274,25 @@ pub struct Change {
     /// The setting's new weight.
     pub weight: Weight,
     pub found: Found,
+    /// Whether the change ranks above the plans as given, as the search ranks plans.
+    pub improves: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Changes {
     /// The outcome of the plans as given, on the same simulated meets as the changes.
     pub current: Outcome,
-    /// Every valid change, ranked as the search ranks plans, best first.
+    /// Every valid change that moves the outcome, ranked as the search ranks plans, best
+    /// first.
     pub changes: Vec<Change>,
 }
 
-/// Moves each setting of each lift one plate step up and down, keeping the rest of the
-/// plans, and scores every change on the same simulated meets as the plans as given.
+/// How many plate steps a single change moves a setting by.
+const CHANGE_STEPS: [u32; 2] = [1, 2];
+
+/// Moves each setting of each lift one and two plate steps up and down, keeping the rest
+/// of the plans, and scores every change on the same simulated meets as the plans as
+/// given. Changes that leave the outcome exactly as it was are left out.
 pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>> {
     let days = MeetDays::new(input.lifter, input.simulations, input.seed);
     let mut problems = days.as_ref().err().cloned().unwrap_or_default();
@@ -298,17 +305,19 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
         _ => return Err(problems),
     };
     let thresholds: Vec<_> = days.iter().map(|day| day.make_thresholds_kg).collect();
+    let current = score(&thresholds, &input.plans, input.goal);
+    let current_rank = rank(input.bomb_out_cap, &current);
     let mut changes = Vec::new();
     for lift in Lift::ALL {
         let others = other_lifts_totals(&thresholds, &input.plans, lift);
         let plan = *input.plans.get(lift);
         for setting in SETTINGS {
             let grams = setting.value(&plan).grams();
-            let steps = [
-                grams.checked_sub(PLATE_STEP.grams()),
-                grams.checked_add(PLATE_STEP.grams()),
-            ];
-            for weight in steps.into_iter().flatten().map(Weight::from_grams) {
+            let steps = CHANGE_STEPS.into_iter().flat_map(|plates| {
+                let by = plates * PLATE_STEP.grams();
+                [grams.checked_sub(by), grams.checked_add(by)]
+            });
+            for weight in steps.flatten().map(Weight::from_grams) {
                 let candidate = setting.with(plan, weight);
                 if !candidate.problems().is_empty() {
                     continue;
@@ -316,11 +325,15 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
                 let mut plans = input.plans;
                 *plans.get_mut(lift) = candidate;
                 let outcome = score_lift(&thresholds, lift, &candidate, &others, input.goal);
+                if outcome == current {
+                    continue;
+                }
                 changes.push(Change {
                     lift,
                     setting,
                     weight,
                     found: Found { plans, outcome },
+                    improves: rank(input.bomb_out_cap, &outcome) > current_rank,
                 });
             }
         }
@@ -331,10 +344,7 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
             .partial_cmp(&rank_of(a))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    Ok(Changes {
-        current: score(&thresholds, &input.plans, input.goal),
-        changes,
-    })
+    Ok(Changes { current, changes })
 }
 
 /// Feasible outcomes rank above those over the cap. Feasible ones rank by goal chance and
@@ -598,20 +608,42 @@ mod tests {
     }
 
     #[test]
-    fn each_change_moves_one_setting_by_one_plate_step() {
+    fn each_change_moves_one_setting_by_one_or_two_plate_steps() {
         let result = single_changes(&change_input(Some(560.0), None)).unwrap();
-        // Every opener and jump after a make can go both ways; a jump of 0 after a miss
-        // can only go up.
-        assert_eq!(result.changes.len(), 3 * (2 + 2 + 1 + 2 + 1));
+        let mut moves = std::collections::BTreeSet::new();
         for change in &result.changes {
             let before = timid_plans();
             let old = change.setting.value(before.get(change.lift)).grams();
-            assert_eq!(old.abs_diff(change.weight.grams()), PLATE_STEP.grams());
+            let moved = old.abs_diff(change.weight.grams());
+            assert!(moved == PLATE_STEP.grams() || moved == 2 * PLATE_STEP.grams());
+            moves.insert(moved);
             let mut expected = before;
             *expected.get_mut(change.lift) =
                 change.setting.with(*before.get(change.lift), change.weight);
             assert_eq!(change.found.plans, expected);
         }
+        assert_eq!(moves.len(), 2);
+    }
+
+    #[test]
+    fn leaves_out_changes_that_do_not_move_the_outcome() {
+        let result = single_changes(&change_input(Some(560.0), None)).unwrap();
+        assert!(
+            result
+                .changes
+                .iter()
+                .all(|change| change.found.outcome != result.current)
+        );
+        let mut certain = change_input(Some(560.0), None);
+        certain.lifter = lifter(0.0, 1e6);
+        let result = single_changes(&certain).unwrap();
+        let after_miss = |change: &&Change| {
+            matches!(
+                change.setting,
+                Setting::SecondAfterMiss | Setting::ThirdAfterMiss
+            )
+        };
+        assert_eq!(result.changes.iter().filter(after_miss).count(), 0);
     }
 
     #[test]
@@ -632,6 +664,21 @@ mod tests {
             .map(|change| rank(changes.bomb_out_cap, &change.found.outcome))
             .collect();
         assert!(ranks.windows(2).all(|pair| pair[0] >= pair[1]));
+    }
+
+    #[test]
+    fn a_change_improves_when_it_ranks_above_the_plans_as_given() {
+        let changes = change_input(Some(560.0), Some(0.05));
+        let result = single_changes(&changes).unwrap();
+        let current = rank(changes.bomb_out_cap, &result.current);
+        for change in &result.changes {
+            assert_eq!(
+                change.improves,
+                rank(changes.bomb_out_cap, &change.found.outcome) > current
+            );
+        }
+        assert!(result.changes.iter().any(|change| change.improves));
+        assert!(result.changes.iter().any(|change| !change.improves));
     }
 
     #[test]

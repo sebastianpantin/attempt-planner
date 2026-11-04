@@ -4,7 +4,8 @@
 //! level grows by a steady yearly rate. The estimate is the level, today, and rate that
 //! best explain which attempts were made and missed, given the make-rate curves. Openers
 //! also count as evidence: lifters tend to open at a typical share of their max, which
-//! keeps the estimate finite for a lifter who never misses.
+//! keeps the estimate finite for a lifter who never misses. The rate is only fitted when
+//! the meets fall on at least two days, and only carried a short way past the last meet.
 
 use std::fmt;
 
@@ -19,6 +20,10 @@ const OPENER_SPREAD: f64 = 0.05;
 /// on average, give or take 10% a year.
 const YEARLY_PROGRESS_SPREAD: f64 = 0.1;
 const DAYS_PER_YEAR: f64 = 365.25;
+/// How far past the latest meet the yearly rate is carried, about 6 months; after that the
+/// level is held flat. A trend fitted over a few meets says little about the years after
+/// them, and lifters plateau, detrain or get hurt.
+const MAX_TREND_DAYS: i32 = 183;
 const LIGHTEST_DAY: f64 = 0.01;
 const PARAMETERS: usize = 4;
 const PROGRESS: usize = 3;
@@ -65,7 +70,8 @@ pub struct MaxEstimateInput {
 #[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct LiftEstimate {
     pub expected_max_kg: f64,
-    /// Standard deviation of the estimate, as a fraction of it.
+    /// Standard deviation of the estimate, as a fraction of it. Grows with the time since
+    /// the lift's latest meet.
     pub uncertainty: f64,
     /// Meets with at least one attempt at this lift.
     pub meets: usize,
@@ -78,7 +84,8 @@ pub struct LiftEstimate {
 pub struct MaxEstimate {
     /// `None` for a lift with no attempts.
     pub lifts: PerLift<Option<LiftEstimate>>,
-    /// How much stronger the lifter gets in a year, as a fraction, shared by all lifts.
+    /// How much stronger the lifter gets in a year, as a fraction, shared by all lifts. 0
+    /// when the meets fall on fewer than two days, which cannot show a trend.
     pub yearly_progress: f64,
 }
 
@@ -235,9 +242,25 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
                     .fold(kg, f64::max)
             })
         });
-    let years_before = |meet: &PastMeet| f64::from(input.on_day - meet.day) / DAYS_PER_YEAR;
+    let meet_days = || {
+        input
+            .meets
+            .iter()
+            .filter(|meet| {
+                Lift::ALL
+                    .iter()
+                    .any(|&lift| !meet.attempts.get(lift).is_empty())
+            })
+            .map(|meet| meet.day)
+    };
+    let latest_day = meet_days().max().unwrap_or(input.on_day);
+    let fits_trend = meet_days().any(|day| day != latest_day);
+    // The level is fitted on the day the trend stops and held flat from there.
+    let level_day = input.on_day.min(latest_day.saturating_add(MAX_TREND_DAYS));
+    let years_before = |meet: &PastMeet| f64::from(level_day - meet.day) / DAYS_PER_YEAR;
     let cost = |x: [f64; PARAMETERS]| {
-        let progress = x[PROGRESS];
+        // Without a trend the progress parameter only meets its prior, which keeps it at 0.
+        let progress = if fits_trend { x[PROGRESS] } else { 0.0 };
         let mut cost = (progress / YEARLY_PROGRESS_SPREAD).powi(2) / 2.0;
         for lift in Lift::ALL {
             let index = lift as usize;
@@ -271,20 +294,31 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
     let covariance = invert(hessian(cost, best));
     let lifts = PerLift::from_fn(|lift| {
         let index = lift as usize;
-        let meets = input
-            .meets
-            .iter()
-            .filter(|meet| !meet.attempts.get(lift).is_empty())
-            .count();
-        (meets > 0).then(|| LiftEstimate {
+        let lift_days = || {
+            input
+                .meets
+                .iter()
+                .filter(|meet| !meet.attempts.get(lift).is_empty())
+                .map(|meet| meet.day)
+        };
+        let latest_day = lift_days().max()?;
+        // Since the latest meet the level drifts like a random walk, with the day-form
+        // spread as its yearly spread, on top of the fit's own spread.
+        let years_since = f64::from(input.on_day - latest_day).max(0.0) / DAYS_PER_YEAR;
+        let fit_spread = covariance.map_or(f64::NAN, |c| c[index][index].sqrt());
+        Some(LiftEstimate {
             expected_max_kg: heaviest.get(lift) * best[index].exp(),
-            uncertainty: covariance.map_or(f64::NAN, |c| c[index][index].sqrt()),
-            meets,
+            uncertainty: fit_spread.hypot(input.day_form_spread * years_since.sqrt()),
+            meets: lift_days().count(),
         })
     });
     Ok(MaxEstimate {
         lifts,
-        yearly_progress: best[PROGRESS].exp_m1(),
+        yearly_progress: if fits_trend {
+            best[PROGRESS].exp_m1()
+        } else {
+            0.0
+        },
     })
 }
 
@@ -385,6 +419,45 @@ mod tests {
         let growth = 1.1f64.powf(f64::from(last_day) / DAYS_PER_YEAR);
         let squat = estimate.lifts.squat.unwrap().expected_max_kg;
         assert!((squat / (200.0 * growth) - 1.0).abs() < 0.03, "{squat}");
+    }
+
+    #[test]
+    fn carries_the_trend_at_most_about_six_months_past_the_last_meet() {
+        let meets = simulated_meets(levels(), 0.1, 12);
+        let last_day = meets.last().unwrap().day;
+        let at = |on_day| estimate_maxes(&input(meets.clone(), on_day)).unwrap();
+        let capped = at(last_day + MAX_TREND_DAYS);
+        let stale = at(last_day + 600);
+        let squat = |estimate: &MaxEstimate| estimate.lifts.squat.unwrap().expected_max_kg;
+        assert_eq!(squat(&stale), squat(&capped));
+        assert!(squat(&capped) > squat(&at(last_day)), "{capped:?}");
+        let projected = 200.0 * 1.1f64.powf(f64::from(last_day + 600) / DAYS_PER_YEAR);
+        assert!(squat(&stale) < projected * 0.97, "{stale:?}");
+    }
+
+    #[test]
+    fn a_single_meet_day_shows_no_trend() {
+        let meets = simulated_meets(levels(), 0.0, 1);
+        let estimate = estimate_maxes(&input(meets.clone(), 400)).unwrap();
+        assert_eq!(estimate.yearly_progress, 0.0);
+        let on_the_day = estimate_maxes(&input(meets, 0)).unwrap();
+        assert_eq!(
+            estimate.lifts.squat.unwrap().expected_max_kg,
+            on_the_day.lifts.squat.unwrap().expected_max_kg
+        );
+    }
+
+    #[test]
+    fn an_older_history_is_less_sure() {
+        let meets = simulated_meets(levels(), 0.0, 12);
+        let last_day = meets.last().unwrap().day;
+        let uncertainty = |on_day| {
+            let estimate = estimate_maxes(&input(meets.clone(), on_day)).unwrap();
+            estimate.lifts.bench.unwrap().uncertainty
+        };
+        let fresh = uncertainty(last_day);
+        let stale = uncertainty(last_day + 730);
+        assert!(stale > fresh + 0.02, "{fresh} {stale}");
     }
 
     #[test]

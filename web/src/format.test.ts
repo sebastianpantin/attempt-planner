@@ -2,17 +2,22 @@ import { expect, it } from "vitest";
 import {
   finePercent,
   headlines,
+  jump,
   kg,
   listOf,
   percent,
+  roundChanceUp,
   simulationError,
+  wholePercent,
 } from "./format.ts";
 import { PRECISE_SIMULATIONS, QUICK_SIMULATIONS } from "./inputs.ts";
 
-it("shows kg with exactly one decimal", () => {
-  expect(kg(200)).toBe("200.0 kg");
+it("shows kg with at most one decimal, without a needless .0", () => {
+  expect(kg(200)).toBe("200 kg");
+  expect(kg(195)).toBe("195 kg");
   expect(kg(202.5)).toBe("202.5 kg");
   expect(kg(512.3456)).toBe("512.3 kg");
+  expect(kg(1002.5)).toBe("1,002.5 kg");
 });
 
 it("shows probabilities with exactly one decimal", () => {
@@ -71,4 +76,22 @@ it("sums up the simulation error in one line", () => {
   ).toBe(
     "Simulation error: about ±0.1 kg on the total and ±0.2% on the bomb-out chance.",
   );
+});
+
+it("signs a jump, and reads a jump of 0 after a miss as a repeat", () => {
+  expect(jump(12.5, false)).toBe("+12.5");
+  expect(jump(5, true)).toBe("+5");
+  expect(jump(0, true)).toBe("repeat");
+  expect(jump(0, false)).toBe("0");
+});
+
+it("rounds a whole percent", () => {
+  expect(wholePercent(0.914)).toBe("91%");
+});
+
+it("rounds a chance up to the next round one", () => {
+  expect(roundChanceUp(0)).toBe(0);
+  expect(roundChanceUp(0.03)).toBe(0.05);
+  expect(roundChanceUp(0.1 + 1e-12)).toBe(0.1);
+  expect(roundChanceUp(0.6)).toBe(1);
 });

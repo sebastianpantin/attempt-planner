@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { CALIBRATIONS, EXAMPLE } from "./example.ts";
 import {
+  bestMade,
   buildEstimateRequest,
+  estimateLine,
   dayNumber,
   estimateValues,
   parsePastMeets,
@@ -111,4 +113,43 @@ it("fills in the estimated maxes and their average uncertainty", () => {
     ["deadlift-expectedMaxKg", 244.5],
     ["maxUncertaintyPercent", 2.1],
   ]);
+});
+
+describe("bestMade", () => {
+  it("finds each lift's heaviest made attempt, skipping misses", () => {
+    const { meets } = parsePastMeets(
+      [
+        "2024-10-01 170 180 -185 110 115 120 200 210 -220",
+        "2025-03-15 180 190 -197.5 120 125 -130 0 0 0",
+      ].join("\n"),
+    );
+    expect(bestMade(meets)).toEqual({
+      squat: 190,
+      bench: 125,
+      deadlift: 210,
+    });
+    expect(bestMade([]).squat).toBeUndefined();
+  });
+});
+
+describe("estimateLine", () => {
+  const found = { expectedMaxKg: 237.7, uncertainty: 0.031, meets: 3 };
+
+  it("says how far an estimate is above the best made lift", () => {
+    expect(estimateLine("squat", found, 210)).toBe(
+      "Squat: 237.5 kg ± 3.1%, from 3 meets. Best made: 210 kg, so the estimate is 27.5 kg above anything you made.",
+    );
+  });
+
+  it("only gives the best made lift when the estimate is not above it", () => {
+    expect(
+      estimateLine("bench", { ...found, expectedMaxKg: 130, meets: 1 }, 135),
+    ).toBe("Bench press: 130 kg ± 3.1%, from 1 meet. Best made: 135 kg.");
+  });
+
+  it("says when no attempt was made", () => {
+    expect(estimateLine("deadlift", found, undefined)).toMatch(
+      /No deadlift made in these meets\.$/,
+    );
+  });
 });

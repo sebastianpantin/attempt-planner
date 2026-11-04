@@ -1,10 +1,12 @@
 import type {
   Lift,
+  LiftEstimate,
   MaxEstimate,
   MaxEstimateInput,
   PastAttempt,
   PastMeet,
 } from "../pkg/attempt_sim_wasm.js";
+import { kg, LIFT_NAMES, percent } from "./format.ts";
 import { type FormValues, type InputName, inputName, LIFTS } from "./inputs.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -187,4 +189,36 @@ export function estimateValues(estimate: MaxEstimate): [InputName, number][] {
     values.push(["maxUncertaintyPercent", Math.max(0.5, toTenth(mean * 100))]);
   }
   return values;
+}
+
+/** Each lift's heaviest made attempt in the meets, `undefined` with none made. */
+export function bestMade(meets: PastMeet[]): Record<Lift, number | undefined> {
+  const best = (lift: Lift) => {
+    const made = meets.flatMap((meet) =>
+      meet.attempts[lift].filter((a) => a.made).map((a) => a.kg),
+    );
+    return made.length > 0 ? Math.max(...made) : undefined;
+  };
+  return {
+    squat: best("squat"),
+    bench: best("bench"),
+    deadlift: best("deadlift"),
+  };
+}
+
+/** A lift's estimate next to its best made lift, saying when the estimate is above it. */
+export function estimateLine(
+  lift: Lift,
+  { expectedMaxKg, uncertainty, meets }: LiftEstimate,
+  bestKg: number | undefined,
+): string {
+  const name = LIFT_NAMES[lift].full;
+  const estimate = `${name}: ${kg(toHalf(expectedMaxKg))} ± ${percent(uncertainty)}, from ${meets} ${meets === 1 ? "meet" : "meets"}.`;
+  if (bestKg === undefined) {
+    return `${estimate} No ${name.toLowerCase()} made in these meets.`;
+  }
+  const above = toHalf(expectedMaxKg) - bestKg;
+  return above > 0
+    ? `${estimate} Best made: ${kg(bestKg)}, so the estimate is ${kg(above)} above anything you made.`
+    : `${estimate} Best made: ${kg(bestKg)}.`;
 }
