@@ -12,9 +12,10 @@ import { describePoint, drawTradeoff } from "./chart.ts";
 import type { Failed } from "./engine.ts";
 import {
   CALIBRATIONS,
-  calibrationValues,
+  describeKept,
   EXAMPLE,
   type Sex,
+  switchCalibration,
 } from "./example.ts";
 import * as format from "./format.ts";
 import {
@@ -128,17 +129,30 @@ function listItem(text: string): HTMLLIElement {
   return item;
 }
 
-function treeItem(node: AttemptNode, attempt = 0, outcome = ""): HTMLLIElement {
-  const item = listItem(
-    `${outcome}${ORDINALS[attempt]} ${format.kg(node.weightKg)}`,
-  );
-  const branches = [
-    ["after a make: ", node.afterMake],
-    ["after a miss: ", node.afterMiss],
-  ] as const;
-  const children = branches.flatMap(([label, child]) =>
-    child ? [treeItem(child, attempt + 1, label)] : [],
-  );
+const OUTCOMES = {
+  afterMake: { mark: "✓ ", text: "after a make: " },
+  afterMiss: { mark: "✗ ", text: "after a miss: " },
+} as const;
+
+function treeItem(
+  node: AttemptNode,
+  attempt = 0,
+  outcome?: keyof typeof OUTCOMES,
+): HTMLLIElement {
+  const item = listItem(`${ORDINALS[attempt]} ${format.kg(node.weightKg)}`);
+  if (outcome) {
+    const mark = document.createElement("span");
+    mark.ariaHidden = "true";
+    mark.textContent = OUTCOMES[outcome].mark;
+    const text = document.createElement("span");
+    text.className = "visually-hidden";
+    text.textContent = OUTCOMES[outcome].text;
+    item.prepend(mark, text);
+  }
+  const children = (["afterMake", "afterMiss"] as const).flatMap((branch) => {
+    const child = node[branch];
+    return child ? [treeItem(child, attempt + 1, branch)] : [];
+  });
   if (children.length > 0) {
     const list = document.createElement("ul");
     list.append(...children);
@@ -416,6 +430,7 @@ cancelButton.addEventListener("click", () => {
 
 const sexSelect = form.elements.namedItem("sex") as HTMLSelectElement;
 const sex = () => sexSelect.value as Sex;
+let calibratedSex: Sex = "any";
 
 const pastMeets = byId("past-meets") as HTMLTextAreaElement;
 const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
@@ -495,9 +510,14 @@ useEstimateButton.addEventListener("click", () => {
 form.addEventListener("input", (event) => {
   if (event.target === pastMeets) return;
   if (event.target === sexSelect) {
-    for (const [name, value] of calibrationValues(sex())) {
-      input(name).valueAsNumber = value;
-    }
+    const { changes, kept } = switchCalibration(
+      readValues(),
+      calibratedSex,
+      sex(),
+    );
+    calibratedSex = sex();
+    for (const [name, value] of changes) input(name).valueAsNumber = value;
+    status("sex-status", describeKept(kept));
   }
   if (stopSearch) {
     stopSearch();

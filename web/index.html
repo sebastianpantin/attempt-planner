@@ -30,8 +30,9 @@
             </label>
             <p class="hint">
               Sets the make-rate and day-form numbers under Advanced to those
-              fitted to that group's meets.
+              fitted to that group's meets, keeping any you changed.
             </p>
+            <p id="sex-status" class="hint" role="status"></p>
             <label>
               Goal total (kg, optional)
               <input name="goalKg" type="number" min="0" step="2.5" />
@@ -52,10 +53,15 @@
               with a minus sign for a miss and 0 for an attempt not taken. Only
               raw meets count, and nothing leaves your browser.
             </p>
+            <p class="hint" id="past-meets-example">
+              For example:
+              <code>2025-03-15 180 190 -197.5 120 125 -130 220 235 245</code>
+            </p>
             <textarea
               id="past-meets"
               rows="4"
               aria-label="Past meets"
+              aria-describedby="past-meets-example"
               placeholder="2025-03-15 180 190 -197.5 120 125 -130 220 235 245"
             ></textarea>
             <div class="actions">
