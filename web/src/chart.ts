@@ -27,7 +27,7 @@ export const describePoint = (point: TradeoffPoint) =>
   [
     shapeLabel(point.shape),
     `bomb-out ${format.percent(point.bombOutProbability)}`,
-    `average total ${format.shortKg(point.expectedTotalKg)}`,
+    `average total ${format.kg(point.expectedTotalKg)}`,
     ...(point.goalProbability === undefined
       ? []
       : [`chance of goal ${format.percent(point.goalProbability)}`]),
@@ -95,7 +95,7 @@ export function drawTradeoff(
     .call(
       axisLeft(y)
         .ticks(6)
-        .tickFormat((value) => format.shortKg(Number(value))),
+        .tickFormat((value) => format.kg(Number(value))),
     );
   root
     .append("text")

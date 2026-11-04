@@ -10,7 +10,7 @@ import { scaleLinear } from "d3-scale";
 import { select, type Selection } from "d3-selection";
 import { curveStepBefore, line } from "d3-shape";
 import { element } from "../dom.ts";
-import { shortKg as kg, LIFT_NAMES, percent } from "../format.ts";
+import { kg, LIFT_NAMES, percent } from "../format.ts";
 import { LIFTS } from "../inputs.ts";
 import { type KnownGoal, knownGoal } from "../outcome.ts";
 import {

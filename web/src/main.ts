@@ -543,7 +543,7 @@ function showTradeoff() {
         row.append(heading);
         for (const [heading, text] of [
           ["Bomb-out", format.percent(point.bombOutProbability)],
-          ["Average total", shortKg(point.expectedTotalKg)],
+          ["Average total", format.kg(point.expectedTotalKg)],
           [
             "Chance of goal",
             point.goalProbability === undefined

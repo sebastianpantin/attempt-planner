@@ -10,13 +10,7 @@ import type {
   TotalShare,
 } from "../../pkg/attempt_sim_wasm.js";
 import { attemptTree } from "../attempt-tree.ts";
-import {
-  shortKg as kg,
-  LIFT_NAMES,
-  percent,
-  roundChanceUp,
-  weight,
-} from "../format.ts";
+import { kg, LIFT_NAMES, percent, roundChanceUp, weight } from "../format.ts";
 import { LIFTS } from "../inputs.ts";
 import type { KnownGoal } from "../outcome.ts";
 
