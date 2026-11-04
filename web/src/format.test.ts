@@ -1,5 +1,11 @@
 import { expect, it } from "vitest";
-import { kg, kgWithError, percent, percentWithError } from "./format.ts";
+import {
+  finePercent,
+  kg,
+  kgWithError,
+  percent,
+  percentWithError,
+} from "./format.ts";
 
 it("shows kg to one decimal, dropping a trailing zero", () => {
   expect(kg(200)).toBe("200 kg");
@@ -10,6 +16,10 @@ it("shows kg to one decimal, dropping a trailing zero", () => {
 it("shows probabilities as percentages", () => {
   expect(percent(0.0512)).toBe("5.1%");
   expect(percent(1)).toBe("100%");
+});
+
+it("shows small probabilities to two decimals when asked", () => {
+  expect(finePercent(0.00012)).toBe("0.01%");
 });
 
 it("adds the standard error", () => {

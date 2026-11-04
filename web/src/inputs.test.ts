@@ -3,6 +3,8 @@ import type { Problem } from "../pkg/attempt_sim_wasm.js";
 import { EXAMPLE } from "./example.ts";
 import {
   buildRequest,
+  buildTradeoffRequest,
+  planValues,
   describeProblem,
   INPUT_NAMES,
   inputsFor,
@@ -113,4 +115,29 @@ it("lists every number input once", () => {
   expect(INPUT_NAMES).toHaveLength(3 * 8 + 3);
   expect(new Set(INPUT_NAMES).size).toBe(INPUT_NAMES.length);
   expect(Object.keys(EXAMPLE).sort()).toEqual([...INPUT_NAMES].sort());
+});
+
+describe("buildTradeoffRequest", () => {
+  it("takes the lifter and goal but no plans, always at the quick count", () => {
+    const evaluate = buildRequest(EXAMPLE, true);
+    const sweep = buildTradeoffRequest(EXAMPLE);
+    expect(sweep).toEqual({
+      lifter: evaluate.lifter,
+      goalKg: evaluate.goalKg,
+      simulations: QUICK_SIMULATIONS,
+      seed: evaluate.seed,
+    });
+  });
+});
+
+describe("planValues", () => {
+  it("fills the plan inputs so the request carries the same plans", () => {
+    const plans = buildRequest(
+      { ...EXAMPLE, "deadlift-openerKg": 210, "bench-thirdAfterMissKg": 2.5 },
+      false,
+    ).plans;
+    const values = { ...EXAMPLE, ...Object.fromEntries(planValues(plans)) };
+    expect(buildRequest(values, false).plans).toEqual(plans);
+    expect(values["deadlift-openerKg"]).toBe(210);
+  });
 });

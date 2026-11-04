@@ -15,5 +15,8 @@ export const percent = (probability: number) =>
 export const kgWithError = (value: number, error: number) =>
   `${kg(value)} ± ${kg(error)}`;
 
+export const finePercent = (probability: number) =>
+  twoPercentDecimals.format(probability);
+
 export const percentWithError = (probability: number, error: number) =>
-  `${percent(probability)} ± ${twoPercentDecimals.format(error)}`;
+  `${percent(probability)} ± ${finePercent(error)}`;

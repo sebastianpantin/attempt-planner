@@ -65,26 +65,73 @@
           </details>
         </form>
 
-        <section id="results" aria-labelledby="results-heading">
-          <h2 id="results-heading">Results</h2>
-          <p id="status" role="status"></p>
-          <div id="evaluation" hidden>
-            <dl id="summary"></dl>
-            <table>
-              <caption>
-                Per lift
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Lift</th>
-                  <th scope="col">At least one make</th>
-                  <th scope="col">Expected best</th>
-                </tr>
-              </thead>
-              <tbody id="lift-results"></tbody>
-            </table>
-          </div>
-        </section>
+        <div class="side">
+          <section id="results" aria-labelledby="results-heading">
+            <h2 id="results-heading">Results</h2>
+            <p id="status" role="status"></p>
+            <div id="evaluation" hidden>
+              <dl id="summary"></dl>
+              <table>
+                <caption>
+                  Per lift
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Lift</th>
+                    <th scope="col">At least one make</th>
+                    <th scope="col">Expected best</th>
+                  </tr>
+                </thead>
+                <tbody id="lift-results"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="tradeoff" aria-labelledby="tradeoff-heading">
+            <h2 id="tradeoff-heading">Tradeoff</h2>
+            <p class="hint">
+              Each dot is a plan from one family: the opener, the 2nd attempt
+              after a make and the 3rd attempt after a make, each a percentage
+              of every lift's expected max, repeating the weight after a miss.
+              The line joins the plans with the highest expected total at each
+              risk of bombing out.
+            </p>
+            <p id="tradeoff-status" role="status"></p>
+            <div id="tradeoff-view" hidden>
+              <svg
+                id="tradeoff-chart"
+                role="img"
+                aria-label="Expected total against the chance of bombing out for every plan in the family. The table below lists the best plans."
+              ></svg>
+              <ul class="chart-key">
+                <li>
+                  <span class="key-family"></span> other plans in the family
+                </li>
+                <li><span class="key-current">+</span> your plan</li>
+                <li id="tradeoff-legend">
+                  <span class="key-best"></span> best plan for the goal; colour
+                  shows the chance of reaching the goal, from
+                  <span class="key-gradient"></span> 0% to 100%
+                </li>
+              </ul>
+              <table>
+                <caption>
+                  Best plans by risk
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Opener / 2nd / 3rd</th>
+                    <th scope="col">Bomb-out</th>
+                    <th scope="col">Expected total</th>
+                    <th scope="col">Goal</th>
+                    <td></td>
+                  </tr>
+                </thead>
+                <tbody id="tradeoff-plans"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   </body>

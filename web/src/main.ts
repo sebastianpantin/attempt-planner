@@ -3,13 +3,17 @@ import type {
   Evaluation,
   Lift,
   Problem,
+  TradeoffPoint,
+  TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
 import { type AttemptNode, attemptTree } from "./attempt-tree.ts";
-import type { Reply } from "./engine.ts";
+import { describePoint, drawTradeoff } from "./chart.ts";
+import type { Failed } from "./engine.ts";
 import { EXAMPLE } from "./example.ts";
 import * as format from "./format.ts";
 import {
   buildRequest,
+  buildTradeoffRequest,
   describeProblem,
   type FormValues,
   INPUT_NAMES,
@@ -18,8 +22,10 @@ import {
   inputsFor,
   type LiftField,
   LIFTS,
+  planValues,
 } from "./inputs.ts";
-import { LatestOnly } from "./latest-only.ts";
+import { simulationWorker } from "./simulation.ts";
+import { highlightedPoints, shapeLabel } from "./tradeoff-view.ts";
 
 const LIFT_NAMES: Record<Lift, string> = {
   squat: "Squat",
@@ -220,72 +226,144 @@ function showEvaluation(evaluation: Evaluation | undefined) {
   );
 }
 
-const status = (text: string) => {
-  byId("status").textContent = text;
+const status = (id: string, text: string) => {
+  byId(id).textContent = text;
 };
 
-function show(reply: Reply, simulations: number, elapsedMs: number) {
-  byId("results").removeAttribute("aria-busy");
-  markProblems(reply.kind === "invalid" ? reply.problems : []);
-  showEvaluation(reply.kind === "evaluated" ? reply.evaluation : undefined);
-  switch (reply.kind) {
-    case "evaluated":
-      status(
-        `${count.format(simulations)} simulated meets in ${count.format(Math.round(elapsedMs))} ms.`,
+let shownEvaluation: Evaluation | undefined;
+let shownTradeoff: Extract<TradeoffResponse, { kind: "swept" }> | undefined;
+
+function usePlan(point: TradeoffPoint) {
+  for (const [name, kg] of planValues(point.plans)) {
+    input(name).valueAsNumber = kg;
+  }
+  update();
+}
+
+function showTradeoff() {
+  const view = byId("tradeoff-view");
+  view.hidden = !shownTradeoff;
+  if (!shownTradeoff) return;
+  const { points, bestForGoal } = shownTradeoff;
+  drawTradeoff(
+    byId("tradeoff-chart") as unknown as SVGSVGElement,
+    {
+      points,
+      bestForGoal,
+      current: shownEvaluation && {
+        bombOutProbability: shownEvaluation.bombOutProbability,
+        expectedTotalKg: shownEvaluation.expectedTotalKg,
+      },
+    },
+    usePlan,
+  );
+  byId("tradeoff-legend").hidden = bestForGoal === undefined;
+  byId("tradeoff-plans").replaceChildren(
+    ...highlightedPoints(points, bestForGoal).map(({ point, bestForGoal }) => {
+      const row = document.createElement("tr");
+      const heading = document.createElement("th");
+      heading.scope = "row";
+      heading.textContent = shapeLabel(point.shape);
+      if (bestForGoal) heading.append(" (best for the goal)");
+      row.append(heading);
+      row.insertCell().textContent = format.finePercent(
+        point.bombOutProbability,
       );
-      break;
-    case "invalid":
-      status("Fix the marked inputs to see results.");
-      break;
-    case "failed":
-      status(`The simulation failed: ${reply.message}`);
-      break;
+      row.insertCell().textContent = format.kg(point.expectedTotalKg);
+      row.insertCell().textContent =
+        point.goalProbability === undefined
+          ? "–"
+          : format.percent(point.goalProbability);
+      const use = document.createElement("button");
+      use.type = "button";
+      use.textContent = "Use";
+      use.setAttribute("aria-label", `Use ${describePoint(point)}`);
+      use.addEventListener("click", () => usePlan(point));
+      row.insertCell().append(use);
+      return row;
+    }),
+  );
+}
+
+function report(
+  id: string,
+  reply: { kind: "invalid" } | Failed | { kind: string },
+  done: () => string,
+  invalid: string,
+  failedAs: string,
+) {
+  if (reply.kind === "invalid") status(id, invalid);
+  else if ("message" in reply) status(id, `${failedAs}: ${reply.message}`);
+  else status(id, done());
+}
+
+const timing = (elapsedMs: number) =>
+  `in ${count.format(Math.round(elapsedMs))} ms`;
+
+const submitEvaluation = simulationWorker("evaluate", {
+  started: (request) =>
+    status("status", `Simulating ${count.format(request.simulations)} meets…`),
+  finished(reply, request, elapsedMs) {
+    byId("results").removeAttribute("aria-busy");
+    markProblems(reply.kind === "invalid" ? reply.problems : []);
+    shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
+    showEvaluation(shownEvaluation);
+    showTradeoff();
+    report(
+      "status",
+      reply,
+      () =>
+        `${count.format(request.simulations)} simulated meets ${timing(elapsedMs)}.`,
+      "Fix the marked inputs to see results.",
+      "The simulation failed",
+    );
+  },
+});
+
+const submitTradeoff = simulationWorker("tradeoff", {
+  started: () => status("tradeoff-status", "Comparing plans…"),
+  finished(reply, request, elapsedMs) {
+    byId("tradeoff").removeAttribute("aria-busy");
+    shownTradeoff = reply.kind === "swept" ? reply : undefined;
+    showTradeoff();
+    report(
+      "tradeoff-status",
+      reply,
+      () =>
+        shownTradeoff?.points.length
+          ? `${count.format(shownTradeoff.points.length)} plans, ${count.format(request.simulations)} meets each, ${timing(elapsedMs)}.`
+          : "No plan in the family fits these maxes.",
+      "Fix the marked inputs to see the tradeoff.",
+      "The comparison failed",
+    );
+  },
+});
+
+let sweptKey = "";
+function simulate(values: FormValues) {
+  submitEvaluation(buildRequest(values, input("precise").checked));
+  const sweep = buildTradeoffRequest(values);
+  const key = JSON.stringify(sweep);
+  if (key !== sweptKey) {
+    sweptKey = key;
+    byId("tradeoff").setAttribute("aria-busy", "true");
+    submitTradeoff(sweep);
   }
 }
 
-const worker = new Worker(new URL("./worker.ts", import.meta.url), {
-  type: "module",
-});
-let startedAt = 0;
-const runs = new LatestOnly<EvaluateRequest>((request) => {
-  startedAt = performance.now();
-  status(`Simulating ${count.format(request.simulations)} meets…`);
-  worker.postMessage(request);
-});
-
-function workerFailed(message: string) {
-  const finished = runs.finish();
-  if (finished) show({ kind: "failed", message }, finished.simulations, 0);
+let typingPause: ReturnType<typeof setTimeout> | undefined;
+function update() {
+  const values = readValues();
+  showTrees(buildRequest(values, false));
+  byId("results").setAttribute("aria-busy", "true");
+  status("status", "Updating…");
+  clearTimeout(typingPause);
+  typingPause = setTimeout(() => simulate(values), TYPING_PAUSE_MS);
 }
 
-worker.addEventListener("error", (event) => {
-  event.preventDefault();
-  workerFailed(event.message || "the simulation worker could not start");
-});
-worker.addEventListener("messageerror", () =>
-  workerFailed("the simulation result could not be read"),
-);
-
-worker.addEventListener("message", (event: MessageEvent<Reply>) => {
-  const elapsedMs = performance.now() - startedAt;
-  const finished = runs.finish();
-  if (finished) show(event.data, finished.simulations, elapsedMs);
-});
-
-const currentRequest = () =>
-  buildRequest(readValues(), input("precise").checked);
-
-let typingPause: ReturnType<typeof setTimeout> | undefined;
-form.addEventListener("input", () => {
-  const request = currentRequest();
-  showTrees(request);
-  byId("results").setAttribute("aria-busy", "true");
-  status("Updating…");
-  clearTimeout(typingPause);
-  typingPause = setTimeout(() => runs.submit(request), TYPING_PAUSE_MS);
-});
+form.addEventListener("input", update);
 form.addEventListener("submit", (event) => event.preventDefault());
 
-const initial = currentRequest();
-showTrees(initial);
-runs.submit(initial);
+const initial = readValues();
+showTrees(buildRequest(initial, false));
+simulate(initial);

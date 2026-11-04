@@ -4,6 +4,7 @@
   line-height: 1.5;
   --problem: #c0392b;
   --muted: color-mix(in srgb, currentColor 60%, transparent);
+  --accent: #3b82f6;
 }
 
 main {
@@ -17,20 +18,109 @@ main {
   gap: 1rem 2rem;
 }
 
-@media (min-width: 60rem) {
+@media (min-width: 64rem) {
   .layout {
-    grid-template-columns: minmax(0, 1fr) 24rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
-  }
-
-  #results {
-    position: sticky;
-    top: 1rem;
   }
 }
 
-#results h2 {
+#results[aria-busy="true"] #evaluation,
+#tradeoff[aria-busy="true"] #tradeoff-view {
+  opacity: 0.5;
+}
+
+#tradeoff-chart {
+  width: 100%;
+  height: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+#tradeoff-chart .family circle {
+  fill: var(--muted);
+  opacity: 0.35;
+}
+
+#tradeoff-chart .frontier {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+#tradeoff-chart .frontier-points circle:not([fill]) {
+  fill: var(--accent);
+}
+
+#tradeoff-chart .frontier-points circle {
+  stroke: currentColor;
+  cursor: pointer;
+}
+
+#tradeoff-chart .best-for-goal {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+#tradeoff-chart .current {
+  fill: var(--problem);
+}
+
+#tradeoff-chart .axis-label {
+  fill: currentColor;
+  font-size: 13px;
+}
+
+.chart-key {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9rem;
+}
+
+.chart-key span {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.key-family {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.key-current {
+  color: var(--problem);
+  font-weight: 700;
+}
+
+.key-best {
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.key-gradient {
+  width: 4rem;
+  height: 0.6rem;
+  background: linear-gradient(
+    to right,
+    #440154,
+    #3b528b,
+    #21918c,
+    #5ec962,
+    #fde725
+  );
+}
+
+.side h2 {
   margin-top: 0;
+}
+
+.side section + section {
+  margin-top: 2rem;
 }
 
 fieldset {
@@ -116,8 +206,4 @@ thead th {
 caption {
   text-align: left;
   font-weight: 600;
-}
-
-#results[aria-busy="true"] #evaluation {
-  opacity: 0.5;
 }
