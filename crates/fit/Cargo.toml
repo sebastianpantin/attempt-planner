@@ -9,9 +9,5 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-arrow-array = "60.1.0"
 attempt-sim = { path = "../sim" }
-parquet = { version = "60.1.0", default-features = false, features = ["arrow", "zstd"] }
-
-[dev-dependencies]
-arrow-schema = "60.1.0"
+csv = "1.4.0"

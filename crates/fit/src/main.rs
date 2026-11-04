@@ -1,10 +1,12 @@
 //! Fits the planner's default make-rate curve to OpenPowerlifting results.
 //!
-//! Usage: `attempt-fit [PARQUET] [--spread FRACTION]`. PARQUET defaults to `$OPL_PARQUET`,
-//! the file that openpowerlifting-mcp's `scripts/fetch_data.py` writes. The spread is
-//! the planner's default day-form spread, 0.03.
+//! Usage: `attempt-fit CSV [--spread FRACTION]`, where CSV is the OpenPowerlifting bulk
+//! CSV from https://data.openpowerlifting.org, unzipped. The spread is the planner's
+//! default day-form spread, 0.03.
 
 use std::error::Error;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -16,7 +18,7 @@ use attempt_sim::lift::Lift;
 const DEFAULT_SPREAD: f64 = 0.03;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut path = std::env::var_os("OPL_PARQUET").map(PathBuf::from);
+    let mut path = None;
     let mut spread = DEFAULT_SPREAD;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -26,13 +28,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             path = Some(PathBuf::from(arg));
         }
     }
-    let path = path.ok_or(
-        "give the Parquet file or set OPL_PARQUET; openpowerlifting-mcp's \
-         scripts/fetch_data.py writes it",
-    )?;
+    let path =
+        path.ok_or("give the OpenPowerlifting bulk CSV, from https://data.openpowerlifting.org")?;
 
     let started = Instant::now();
-    let attempts = raw_full_power_attempts(&path)?;
+    let attempts = raw_full_power_attempts(BufReader::new(File::open(&path)?))?;
     println!("day-form spread {spread}");
     println!(
         "{:<9} {:>7}  {:>17}  {:>23}  {:>9}  {:>6}  {:>17}",
