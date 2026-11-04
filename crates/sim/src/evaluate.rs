@@ -162,7 +162,7 @@ impl fmt::Display for InputProblem {
                 write!(f, "expected max is lighter than the {BAR} bar")
             }
             Self::InvalidCurve { .. } => {
-                f.write_str("make-rate curve needs a positive, finite midpoint and steepness")
+                f.write_str("make-rate curve needs a positive, finite midpoint and steepness, and a technical-miss chance from 0 to below 1")
             }
             Self::InvalidDayForm => write!(
                 f,
@@ -790,7 +790,7 @@ mod tests {
                 "not a valid weight in kg",
                 "attempt 1 is lighter than the 20 kg bar",
                 "expected max is lighter than the 20 kg bar",
-                "make-rate curve needs a positive, finite midpoint and steepness",
+                "make-rate curve needs a positive, finite midpoint and steepness, and a technical-miss chance from 0 to below 1",
                 "day-form spread must be between 0 and 0.5 and correlation between 0 and 1",
                 "simulations must be between 1 and 1000000",
             ]
