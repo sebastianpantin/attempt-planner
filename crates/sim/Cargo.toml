@@ -9,8 +9,8 @@ repository.workspace = true
 
 [dependencies]
 rand = { version = "0.10.3", default-features = false }
-rand_chacha = { version = "0.10.0", default-features = false }
 rand_distr = { version = "0.6.0", default-features = false, features = ["std_math"] }
+rand_xoshiro = { version = "0.8.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 tsify = { version = "0.5.8", default-features = false, features = ["js"], optional = true }
 wasm-bindgen = { version = "0.2.130", optional = true }

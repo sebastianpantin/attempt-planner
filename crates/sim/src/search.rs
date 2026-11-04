@@ -1,10 +1,13 @@
+use std::sync::Arc;
+
+use crate::days::{StepPlan, Steps, goal_steps, totals};
 use crate::evaluate::{InputProblem, Lifter, MeetDays, plan_problems};
 use crate::lift::{Lift, PerLift};
 pub use crate::outcome::Outcome;
 use crate::outcome::{OutcomeTally, is_valid_bomb_out_cap};
 use crate::plan::{Jumps, LiftPlan};
-use crate::rules::{ATTEMPTS_PER_LIFT, BAR, PLATE_STEP, Weight, best_attempt};
-use crate::tradeoff::{self, TradeoffInput};
+use crate::rules::{BAR, PLATE_STEP, Weight};
+use crate::tradeoff;
 
 /// A search stops after this many rounds even if it is still improving.
 pub const MAX_ROUNDS: u32 = 20;
@@ -19,6 +22,10 @@ pub struct SearchInput {
     pub bomb_out_cap: Option<f64>,
     pub simulations: u32,
     pub seed: u64,
+    /// The plans at `best_for_search` of a tradeoff already swept with the same lifter, goal,
+    /// cap, simulations and seed, so the search need not sweep again. Swept when absent or
+    /// invalid.
+    pub family_best: Option<PerLift<LiftPlan>>,
 }
 
 /// Plans with their outcome on the simulated meets they were scored on.
@@ -107,11 +114,13 @@ impl Setting {
 /// round changes nothing. Every plan is scored on the same simulated meets.
 #[derive(Debug, Clone)]
 pub struct Search {
-    make_thresholds_kg: Vec<PerLift<[f64; ATTEMPTS_PER_LIFT]>>,
-    lifter: Lifter,
+    days: Arc<MeetDays>,
     goal: Option<Weight>,
     bomb_out_cap: Option<f64>,
     best: Found,
+    /// Each day's total of the lifts other than the one being changed. They stay the same
+    /// while one lift's settings are tried, so they are worked out when the lift changes.
+    others: Vec<Steps>,
     next: usize,
     unchanged: usize,
     round: u32,
@@ -119,18 +128,14 @@ pub struct Search {
 
 impl Search {
     pub fn new(input: &SearchInput) -> Result<Self, Vec<InputProblem>> {
-        let family = tradeoff::tradeoff(&TradeoffInput {
-            lifter: input.lifter,
-            goal: input.goal,
-            bomb_out_cap: input.bomb_out_cap,
-            simulations: input.simulations,
-            seed: input.seed,
-        })?;
-        let days = MeetDays::new(input.lifter, input.simulations, input.seed)?;
-
-        let make_thresholds_kg: Vec<_> = days.iter().map(|day| day.make_thresholds_kg).collect();
+        let days = MeetDays::shared_with_cap(
+            input.lifter,
+            input.simulations,
+            input.seed,
+            input.bomb_out_cap,
+        )?;
         let higher = |a: Found, b: Found| {
-            if rank(input.bomb_out_cap, &b.outcome) > rank(input.bomb_out_cap, &a.outcome) {
+            if ranks_higher(input.bomb_out_cap, &b.outcome, &a.outcome) {
                 b
             } else {
                 a
@@ -138,30 +143,35 @@ impl Search {
         };
         let found = |plans| Found {
             plans,
-            outcome: score(&make_thresholds_kg, &plans, input.goal),
+            outcome: score(&days, &plans, input.goal),
         };
-        let family = family.points.iter().map(|point| Found {
-            plans: point.plans,
-            outcome: Outcome {
-                bomb_out_probability: point.bomb_out_probability,
-                expected_total_kg: point.expected_total_kg,
-                goal_probability: point.goal_probability,
-            },
-        });
-        let start = input
-            .start
-            .filter(|plans| plans.iter().all(|(_, plan)| plan.problems().is_empty()))
-            .map(found);
-        let best = family
+        let valid =
+            |plans: &PerLift<LiftPlan>| plans.iter().all(|(_, plan)| plan.problems().is_empty());
+        let family_best = match input.family_best.filter(valid) {
+            Some(plans) => Some(found(plans)),
+            None => {
+                let swept = tradeoff::sweep(&days, input.goal, input.bomb_out_cap);
+                swept.best_for_search.map(|index| {
+                    let point = &swept.points[index];
+                    Found {
+                        plans: point.plans,
+                        outcome: point.outcome(),
+                    }
+                })
+            }
+        };
+        let start = input.start.filter(valid).map(found);
+        let best = family_best
+            .into_iter()
             .chain(start)
             .reduce(higher)
             .unwrap_or_else(|| found(PerLift::from_fn(|_| fallback_plan())));
         Ok(Self {
-            make_thresholds_kg,
-            lifter: input.lifter,
+            days,
             goal: input.goal,
             bomb_out_cap: input.bomb_out_cap,
             best,
+            others: Vec::new(),
             next: 0,
             unchanged: 0,
             round: 1,
@@ -181,22 +191,18 @@ impl Search {
         if !self.is_done() {
             let lift = Lift::ALL[self.next / SETTINGS.len()];
             let setting = SETTINGS[self.next % SETTINGS.len()];
-            let others = other_lifts_totals(&self.make_thresholds_kg, &self.best.plans, lift);
+            if self.next.is_multiple_of(SETTINGS.len()) {
+                self.others = other_lifts_totals(&self.days, &self.best.plans, lift);
+            }
             let current = *self.best.plans.get(lift);
-            let expected_max = self.lifter.lifts.get(lift).expected_max;
+            let expected_max = self.days.lifter().lifts.get(lift).expected_max;
             let mut improved = false;
             for weight in setting.values(expected_max) {
                 let candidate = setting.with(current, weight);
                 if candidate == current || !candidate.problems().is_empty() {
                     continue;
                 }
-                let outcome = score_lift(
-                    &self.make_thresholds_kg,
-                    lift,
-                    &candidate,
-                    &others,
-                    self.goal,
-                );
+                let outcome = score_lift(&self.days, lift, &candidate, &self.others, self.goal);
                 if self.ranks_higher(&outcome, &self.best.outcome) {
                     *self.best.plans.get_mut(lift) = candidate;
                     self.best.outcome = outcome;
@@ -217,41 +223,31 @@ impl Search {
     }
 
     fn ranks_higher(&self, a: &Outcome, b: &Outcome) -> bool {
-        rank(self.bomb_out_cap, a) > rank(self.bomb_out_cap, b)
+        ranks_higher(self.bomb_out_cap, a, b)
     }
 }
 
-/// Each day's total over the lifts other than `lift`, `None` when one of them bombs out.
-fn other_lifts_totals(
-    make_thresholds_kg: &[PerLift<[f64; ATTEMPTS_PER_LIFT]>],
-    plans: &PerLift<LiftPlan>,
-    lift: Lift,
-) -> Vec<Option<Weight>> {
-    make_thresholds_kg
-        .iter()
-        .map(|thresholds| {
-            plans
-                .iter()
-                .filter(|(other, _)| *other != lift)
-                .map(|(other, plan)| best_attempt(&plan.attempts(*thresholds.get(other))))
-                .sum()
-        })
-        .collect()
+/// Each day's total over the lifts other than `lift`, 0 when one of them bombs out.
+fn other_lifts_totals(days: &MeetDays, plans: &PerLift<LiftPlan>, lift: Lift) -> Vec<Steps> {
+    totals(
+        lift.others()
+            .map(|other| (days.lifts().get(other), StepPlan::new(plans.get(other)))),
+    )
 }
 
 /// The outcome with `plan` for `lift`, given the other lifts' totals on the same days.
 fn score_lift(
-    make_thresholds_kg: &[PerLift<[f64; ATTEMPTS_PER_LIFT]>],
+    days: &MeetDays,
     lift: Lift,
     plan: &LiftPlan,
-    others: &[Option<Weight>],
+    others: &[Steps],
     goal: Option<Weight>,
 ) -> Outcome {
     let mut tally = OutcomeTally::default();
-    for (thresholds, other) in make_thresholds_kg.iter().zip(others) {
-        let best = best_attempt(&plan.attempts(*thresholds.get(lift)));
-        tally.record(other.zip(best).map(|(other, best)| other + best), goal);
-    }
+    let plan = StepPlan::new(plan);
+    days.lifts()
+        .get(lift)
+        .record(&mut tally, &plan, others, goal_steps(goal));
     tally.outcome(goal)
 }
 
@@ -294,7 +290,7 @@ const CHANGE_STEPS: [u32; 2] = [1, 2];
 /// of the plans, and scores every change on the same simulated meets as the plans as
 /// given. Changes that leave the outcome exactly as it was are left out.
 pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>> {
-    let days = MeetDays::new(input.lifter, input.simulations, input.seed);
+    let days = MeetDays::shared(input.lifter, input.simulations, input.seed);
     let mut problems = days.as_ref().err().cloned().unwrap_or_default();
     problems.extend(plan_problems(&input.plans));
     if !is_valid_bomb_out_cap(input.bomb_out_cap) {
@@ -304,12 +300,11 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
         Ok(days) if problems.is_empty() => days,
         _ => return Err(problems),
     };
-    let thresholds: Vec<_> = days.iter().map(|day| day.make_thresholds_kg).collect();
-    let current = score(&thresholds, &input.plans, input.goal);
+    let current = score(&days, &input.plans, input.goal);
     let current_rank = rank(input.bomb_out_cap, &current);
     let mut changes = Vec::new();
     for lift in Lift::ALL {
-        let others = other_lifts_totals(&thresholds, &input.plans, lift);
+        let others = other_lifts_totals(&days, &input.plans, lift);
         let plan = *input.plans.get(lift);
         for setting in SETTINGS {
             let grams = setting.value(&plan).grams();
@@ -324,7 +319,7 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
                 }
                 let mut plans = input.plans;
                 *plans.get_mut(lift) = candidate;
-                let outcome = score_lift(&thresholds, lift, &candidate, &others, input.goal);
+                let outcome = score_lift(&days, lift, &candidate, &others, input.goal);
                 if outcome == current {
                     continue;
                 }
@@ -347,6 +342,11 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
     Ok(Changes { current, changes })
 }
 
+/// Whether `a` ranks above `b` as the search ranks plans.
+pub(crate) fn ranks_higher(bomb_out_cap: Option<f64>, a: &Outcome, b: &Outcome) -> bool {
+    rank(bomb_out_cap, a) > rank(bomb_out_cap, b)
+}
+
 /// Feasible outcomes rank above those over the cap. Feasible ones rank by goal chance and
 /// then average total; the rest by lower bomb-out chance and then average total.
 fn rank(bomb_out_cap: Option<f64>, outcome: &Outcome) -> [f64; 3] {
@@ -362,20 +362,9 @@ fn rank(bomb_out_cap: Option<f64>, outcome: &Outcome) -> [f64; 3] {
     }
 }
 
-fn score(
-    make_thresholds_kg: &[PerLift<[f64; ATTEMPTS_PER_LIFT]>],
-    plans: &PerLift<LiftPlan>,
-    goal: Option<Weight>,
-) -> Outcome {
-    let mut tally = OutcomeTally::default();
-    for thresholds in make_thresholds_kg {
-        let total = plans
-            .iter()
-            .map(|(lift, plan)| best_attempt(&plan.attempts(*thresholds.get(lift))))
-            .sum();
-        tally.record(total, goal);
-    }
-    tally.outcome(goal)
+fn score(days: &MeetDays, plans: &PerLift<LiftPlan>, goal: Option<Weight>) -> Outcome {
+    let others = other_lifts_totals(days, plans, Lift::Squat);
+    score_lift(days, Lift::Squat, &plans.squat, &others, goal)
 }
 
 /// The lightest valid plan, a start for maxes too light for the tradeoff family.
@@ -462,6 +451,7 @@ mod tests {
             bomb_out_cap: cap,
             simulations: 2_000,
             seed: 5,
+            family_best: None,
         }
     }
 
@@ -526,6 +516,63 @@ mod tests {
         for point in family.points {
             assert!(point.goal_probability <= found.outcome.goal_probability);
         }
+    }
+
+    fn run(mut search: Search) -> Found {
+        while !search.is_done() {
+            search.step();
+        }
+        search.best()
+    }
+
+    #[test]
+    fn the_best_plans_of_the_same_sweep_give_the_same_search() {
+        let input = input(Some(540.0), Some(0.05));
+        let swept = crate::tradeoff::tradeoff(&crate::tradeoff::TradeoffInput {
+            lifter: input.lifter,
+            goal: input.goal,
+            bomb_out_cap: input.bomb_out_cap,
+            simulations: input.simulations,
+            seed: input.seed,
+        })
+        .unwrap();
+        let given = SearchInput {
+            family_best: Some(swept.points[swept.best_for_search.unwrap()].plans),
+            ..input
+        };
+        assert_eq!(
+            run(Search::new(&given).unwrap()),
+            run(Search::new(&input).unwrap())
+        );
+    }
+
+    #[test]
+    fn given_family_plans_are_used_instead_of_sweeping() {
+        let input = SearchInput {
+            start: None,
+            ..input(Some(540.0), Some(0.05))
+        };
+        let given = SearchInput {
+            family_best: Some(timid_plans()),
+            ..input
+        };
+        assert_eq!(Search::new(&given).unwrap().best().plans, timid_plans());
+        assert_ne!(Search::new(&input).unwrap().best().plans, timid_plans());
+    }
+
+    #[test]
+    fn invalid_family_plans_are_swept_again() {
+        let input = input(Some(540.0), Some(0.05));
+        let mut plans = timid_plans();
+        plans.squat.opener = kg(10.0);
+        let given = SearchInput {
+            family_best: Some(plans),
+            ..input
+        };
+        assert_eq!(
+            Search::new(&given).unwrap().best(),
+            Search::new(&input).unwrap().best()
+        );
     }
 
     #[test]

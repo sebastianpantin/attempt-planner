@@ -6,6 +6,7 @@ import type {
   Problem,
   SearchRequest,
   TradeoffRequest,
+  TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
 
 export const LIFTS = ["squat", "bench", "deadlift"] as const satisfies Lift[];
@@ -142,9 +143,34 @@ export function buildRequest(
   };
 }
 
-/** The sweep's lifter, goal and bomb-out cap, with the current plans to start from. */
-export function buildSearchRequest(values: FormValues): SearchRequest {
-  return { ...buildTradeoffRequest(values), plans: plansOf(values) };
+/** A key that is the same for two tradeoff requests exactly when they ask for the same sweep. */
+export const sweepKey = (request: TradeoffRequest) => JSON.stringify(request);
+
+/** A tradeoff sweep and the request it answered. */
+export interface Swept {
+  sweep: Extract<TradeoffResponse, { kind: "swept" }>;
+  request: TradeoffRequest;
+}
+
+/**
+ * The sweep's lifter, goal and bomb-out cap, with the current plans to start from. Carries
+ * the best plans of `swept` when it answered the same sweep, so the search need not sweep
+ * again.
+ */
+export function buildSearchRequest(
+  values: FormValues,
+  swept?: Swept,
+): SearchRequest {
+  const request = buildTradeoffRequest(values);
+  const sameSweep = swept && sweepKey(swept.request) === sweepKey(request);
+  const index = sameSweep ? swept.sweep.bestForSearch : undefined;
+  const familyBest =
+    index === undefined ? undefined : swept?.sweep.points[index]?.plans;
+  return {
+    ...request,
+    plans: plansOf(values),
+    ...(familyBest ? { familyBest } : {}),
+  };
 }
 
 /** The plan inputs, with their values, that make `buildRequest` carry these plans. */

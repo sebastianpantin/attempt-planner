@@ -8,6 +8,7 @@ import {
   buildRequest,
   buildSearchRequest,
   buildTradeoffRequest,
+  type Swept,
 } from "./inputs.ts";
 import { buildEstimateRequest, parsePastMeets } from "./past-meets.ts";
 
@@ -81,6 +82,18 @@ it("searches step by step until done", () => {
       .every((r) => r.kind === "progress" && !r.progress.done),
   ).toBe(true);
   expect(last.progress.bombOutProbability).toBeLessThanOrEqual(0.05);
+});
+
+it("searches to the same plans from the swept best plans", () => {
+  const request = buildTradeoffRequest(EXAMPLE);
+  const sweep = answer({ kind: "tradeoff", request });
+  if (sweep.kind !== "swept") throw new Error(JSON.stringify(sweep));
+  const last = (swept?: Swept) =>
+    [...search(buildSearchRequest(EXAMPLE, swept))].at(-1);
+  expect(buildSearchRequest(EXAMPLE, { sweep, request })).toHaveProperty(
+    "familyBest",
+  );
+  expect(last({ sweep, request })).toEqual(last());
 });
 
 it("fails a search whose input has a problem", () => {

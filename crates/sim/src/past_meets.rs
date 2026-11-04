@@ -325,8 +325,8 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
 #[cfg(test)]
 mod tests {
     use rand::{RngExt, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
     use rand_distr::StandardNormal;
+    use rand_xoshiro::Xoshiro256PlusPlus;
 
     use super::*;
 
@@ -351,7 +351,7 @@ mod tests {
     /// A lifter at `level_kg` on day 0, getting `yearly_growth` stronger each year, who
     /// opens at the typical share and jumps 5% and then 4% after a make.
     fn simulated_meets(level_kg: PerLift<f64>, yearly_growth: f64, count: i32) -> Vec<PastMeet> {
-        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
         (0..count)
             .map(|i| {
                 let day = i * 60;

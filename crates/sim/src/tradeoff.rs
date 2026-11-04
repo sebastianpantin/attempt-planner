@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
+use crate::days::{StepPlan, goal_steps, record_rows};
 use crate::evaluate::{InputProblem, Lifter, MeetDays};
-use crate::lift::PerLift;
-use crate::outcome::{OutcomeTally, is_valid_bomb_out_cap};
+use crate::lift::{Lift, PerLift};
+use crate::outcome::{Outcome, OutcomeTally};
 use crate::plan::{Jumps, LiftPlan};
 use crate::rules::{PLATE_STEP, Weight};
+use crate::search;
 
 const OPENER_PERCENTS: RangeInclusive<u32> = 85..=95;
 const SECOND_PERCENTS: RangeInclusive<u32> = 93..=101;
@@ -91,6 +93,16 @@ pub struct TradeoffPoint {
     pub on_frontier: bool,
 }
 
+impl TradeoffPoint {
+    pub fn outcome(&self) -> Outcome {
+        Outcome {
+            bomb_out_probability: self.bomb_out_probability,
+            expected_total_kg: self.expected_total_kg,
+            goal_probability: self.goal_probability,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tradeoff {
     pub points: Vec<TradeoffPoint>,
@@ -98,31 +110,35 @@ pub struct Tradeoff {
     /// goal, ties going to the higher expected total. Absent without a goal or without a
     /// point within the cap.
     pub best_for_goal: Option<usize>,
+    /// Index of the point a plan search starts from: the highest as the search ranks plans,
+    /// the first of any tie. Absent without points.
+    pub best_for_search: Option<usize>,
 }
 
 /// Scores every shape in the family that fits the lifter's maxes on the same simulated
 /// meet days, so the differences between shapes are not noise. Shapes that round to the
 /// same plans as an earlier shape are left out.
 pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
-    let cap_is_valid = is_valid_bomb_out_cap(input.bomb_out_cap);
-    let days = match (
-        MeetDays::new(input.lifter, input.simulations, input.seed),
-        cap_is_valid,
-    ) {
-        (Ok(days), true) => days,
-        (days, _) => {
-            let mut problems = days.err().unwrap_or_default();
-            if !cap_is_valid {
-                problems.push(InputProblem::InvalidBombOutCap);
-            }
-            return Err(problems);
-        }
-    };
+    let days = MeetDays::shared_with_cap(
+        input.lifter,
+        input.simulations,
+        input.seed,
+        input.bomb_out_cap,
+    )?;
+    Ok(sweep(&days, input.goal, input.bomb_out_cap))
+}
+
+/// How many days the sweep scores at a time, so each lift's bests for a block stay in cache
+/// while every shape adds them up.
+const DAY_BLOCK: usize = 1024;
+
+/// The tradeoff on days already simulated.
+pub(crate) fn sweep(days: &MeetDays, goal: Option<Weight>, bomb_out_cap: Option<f64>) -> Tradeoff {
     let mut seen = HashSet::new();
     let candidates: Vec<(PlanShape, PerLift<LiftPlan>)> = plan_family()
         .filter_map(|shape| {
             let plan = |lift: &crate::evaluate::LiftModel| shape.plan(lift.expected_max);
-            let lifts = &input.lifter.lifts;
+            let lifts = &days.lifter().lifts;
             let plans = PerLift {
                 squat: plan(&lifts.squat)?,
                 bench: plan(&lifts.bench)?,
@@ -133,8 +149,9 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
         .filter(|(_, plans)| seen.insert(*plans))
         .collect();
 
-    // Each lift has far fewer distinct plans than there are shapes, so every day scores
-    // each distinct lift plan once and the shapes add up those results.
+    // Each block of days scores each lift's distinct plans once, into one row per plan, and
+    // each shape adds up its three rows. The squat and the bench have far fewer distinct
+    // plans than there are shapes, and rows keep every loop a plain pass over arrays.
     let lift_plans: PerLift<Vec<LiftPlan>> = PerLift::from_fn(|lift| {
         let mut seen = HashSet::new();
         candidates
@@ -143,7 +160,7 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
             .filter(|plan| seen.insert(*plan))
             .collect()
     });
-    let plan_indices: Vec<PerLift<usize>> = candidates
+    let rows: Vec<PerLift<usize>> = candidates
         .iter()
         .map(|(_, plans)| {
             plans.map(|lift, plan| {
@@ -155,21 +172,26 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
             })
         })
         .collect();
+    let step_plans = lift_plans.map(|_, plans| plans.iter().map(StepPlan::new).collect::<Vec<_>>());
 
-    let mut bests: PerLift<Vec<Option<Weight>>> = PerLift::from_fn(|_| Vec::new());
+    let goal_steps = goal_steps(goal);
+    let mut bests = step_plans.map(|_, plans| vec![[0; DAY_BLOCK]; plans.len()]);
     let mut tallies = vec![OutcomeTally::default(); candidates.len()];
-    for day in days.iter() {
-        for (lift, plans) in lift_plans.iter() {
-            let lift_bests = bests.get_mut(lift);
-            lift_bests.clear();
-            lift_bests.extend(plans.iter().map(|plan| day.best(lift, plan)));
+    for start in (0..days.len()).step_by(DAY_BLOCK) {
+        let block = start..days.len().min(start + DAY_BLOCK);
+        for lift in Lift::ALL {
+            let rows = bests.get_mut(lift).iter_mut();
+            for (plan, row) in step_plans.get(lift).iter().zip(rows) {
+                days.lifts().get(lift).bests(plan, block.clone(), row);
+            }
         }
-        for (indices, tally) in plan_indices.iter().zip(&mut tallies) {
-            let total: Option<Weight> = indices
-                .iter()
-                .map(|(lift, &index)| bests.get(lift)[index])
-                .sum();
-            tally.record(total, input.goal);
+        let row = |lift, index: usize| &bests.get(lift)[index][..block.len()];
+        for (rows, tally) in rows.iter().zip(&mut tallies) {
+            record_rows(
+                tally,
+                Lift::ALL.map(|lift| row(lift, *rows.get(lift))),
+                goal_steps,
+            );
         }
     }
 
@@ -177,7 +199,7 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
         .into_iter()
         .zip(tallies)
         .map(|((shape, plans), tally)| {
-            let outcome = tally.outcome(input.goal);
+            let outcome = tally.outcome(goal);
             TradeoffPoint {
                 shape,
                 plans,
@@ -189,13 +211,20 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
         })
         .collect();
     mark_frontier(&mut points);
-    let best_for_goal = input
-        .goal
-        .and_then(|_| best_for_goal(&points, input.bomb_out_cap));
-    Ok(Tradeoff {
+    let best_for_goal = goal.and_then(|_| best_for_goal(&points, bomb_out_cap));
+    let best_for_search = (0..points.len()).reduce(|best, index| {
+        let outcome = |index: usize| points[index].outcome();
+        if search::ranks_higher(bomb_out_cap, &outcome(index), &outcome(best)) {
+            index
+        } else {
+            best
+        }
+    });
+    Tradeoff {
         points,
         best_for_goal,
-    })
+        best_for_search,
+    }
 }
 
 fn mark_frontier(points: &mut [TradeoffPoint]) {
@@ -416,6 +445,20 @@ mod tests {
         assert!(safest > 0.0);
         input.bomb_out_cap = Some(safest / 2.0);
         assert_eq!(tradeoff(&input).unwrap().best_for_goal, None);
+    }
+
+    #[test]
+    fn the_search_starts_from_the_first_point_it_ranks_highest() {
+        let input = input(Some(540.0));
+        let result = tradeoff(&input).unwrap();
+        let best = result.best_for_search.unwrap();
+        let outcome = result.points[best].outcome();
+        for (index, point) in result.points.iter().enumerate() {
+            let higher = search::ranks_higher(input.bomb_out_cap, &point.outcome(), &outcome);
+            let tied_earlier = index < best
+                && !search::ranks_higher(input.bomb_out_cap, &outcome, &point.outcome());
+            assert!(!higher && !tied_earlier);
+        }
     }
 
     #[test]

@@ -13,6 +13,15 @@ pub enum Lift {
 
 impl Lift {
     pub const ALL: [Lift; 3] = [Lift::Squat, Lift::Bench, Lift::Deadlift];
+
+    /// The two other lifts, in meet order.
+    pub fn others(self) -> [Lift; 2] {
+        match self {
+            Lift::Squat => [Lift::Bench, Lift::Deadlift],
+            Lift::Bench => [Lift::Squat, Lift::Deadlift],
+            Lift::Deadlift => [Lift::Squat, Lift::Bench],
+        }
+    }
 }
 
 impl fmt::Display for Lift {
@@ -89,6 +98,14 @@ mod tests {
                 (Lift::Deadlift, "deadlift")
             ]
         );
+    }
+
+    #[test]
+    fn others_are_every_other_lift_in_meet_order() {
+        for lift in Lift::ALL {
+            let expected: Vec<_> = Lift::ALL.into_iter().filter(|&l| l != lift).collect();
+            assert_eq!(lift.others().to_vec(), expected);
+        }
     }
 
     #[test]
