@@ -109,6 +109,7 @@ impl DrawWeights {
 mod tests {
     use super::*;
     use crate::lift::PerLift;
+    use crate::testing::kg;
 
     fn day_maxes(
         form: &DayForm,
@@ -119,7 +120,6 @@ mod tests {
         let draws = form.draw_weights();
         expected_kg.map(|lift, &expected| draws.day_max(expected, shared, *own.get(lift)))
     }
-    use crate::testing::kg;
 
     const CURVE: MakeRateCurve = MakeRateCurve {
         ratio_at_half: 1.0,

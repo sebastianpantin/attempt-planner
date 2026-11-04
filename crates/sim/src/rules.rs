@@ -43,12 +43,6 @@ impl std::ops::Add for Weight {
     }
 }
 
-impl std::iter::Sum for Weight {
-    fn sum<I: Iterator<Item = Weight>>(iter: I) -> Weight {
-        iter.fold(Weight::ZERO, |total, weight| total + weight)
-    }
-}
-
 impl fmt::Display for Weight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} kg", self.kg())

@@ -307,7 +307,7 @@ impl MeetDays {
                 let own = StandardNormal.sample(&mut rng);
                 let day_max_kg = draws.day_max(model.expected_max.kg(), shared, own);
                 let curve = &model.curve;
-                let technical: [bool; ATTEMPTS_PER_LIFT] =
+                let technical =
                     std::array::from_fn(|_| rng.random::<f64>() < curve.technical_miss_chance);
                 let thresholds_kg = technical.map(|technical| {
                     let roll = rng.random();
@@ -604,7 +604,7 @@ fn nearest_rank(counts: &[u32], from: usize, quantile: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::plan::Jumps;
-    use crate::rules::{PLATE_STEP, check_progression};
+    use crate::rules::check_progression;
     use crate::testing::kg;
     use proptest::prelude::*;
 

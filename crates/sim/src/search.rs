@@ -93,8 +93,7 @@ impl Setting {
         }
     }
 
-    fn with(self, plan: LiftPlan, weight: Weight) -> LiftPlan {
-        let mut plan = plan;
+    fn with(self, mut plan: LiftPlan, weight: Weight) -> LiftPlan {
         match self {
             Self::Opener => plan.opener = weight,
             Self::SecondAfterMake => plan.second.after_make = weight,
@@ -203,7 +202,7 @@ impl Search {
                     continue;
                 }
                 let outcome = score_lift(&self.days, lift, &candidate, &self.others, self.goal);
-                if self.ranks_higher(&outcome, &self.best.outcome) {
+                if ranks_higher(self.bomb_out_cap, &outcome, &self.best.outcome) {
                     *self.best.plans.get_mut(lift) = candidate;
                     self.best.outcome = outcome;
                     improved = true;
@@ -220,10 +219,6 @@ impl Search {
             done: self.is_done(),
             best: self.best,
         }
-    }
-
-    fn ranks_higher(&self, a: &Outcome, b: &Outcome) -> bool {
-        ranks_higher(self.bomb_out_cap, a, b)
     }
 }
 
@@ -392,10 +387,8 @@ pub fn search(input: &SearchInput) -> Result<Found, Vec<InputProblem>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evaluate::{EvaluateInput, InputProblem, LiftModel, Lifter, evaluate};
-    use crate::lift::{Lift, PerLift};
+    use crate::evaluate::{EvaluateInput, LiftModel, evaluate};
     use crate::model::{DayForm, MakeRateCurve};
-    use crate::plan::{Jumps, LiftPlan};
     use crate::testing::kg;
 
     fn lifter(spread: f64, steepness: f64) -> Lifter {
@@ -505,7 +498,7 @@ mod tests {
         let found = search(&input).unwrap();
         let start = outcome_of(&input, timid_plans());
         assert!(found.outcome.goal_probability >= start.goal_probability);
-        let family = crate::tradeoff::tradeoff(&crate::tradeoff::TradeoffInput {
+        let family = tradeoff::tradeoff(&tradeoff::TradeoffInput {
             lifter: input.lifter,
             goal: input.goal,
             bomb_out_cap: None,
@@ -518,17 +511,10 @@ mod tests {
         }
     }
 
-    fn run(mut search: Search) -> Found {
-        while !search.is_done() {
-            search.step();
-        }
-        search.best()
-    }
-
     #[test]
     fn the_best_plans_of_the_same_sweep_give_the_same_search() {
         let input = input(Some(540.0), Some(0.05));
-        let swept = crate::tradeoff::tradeoff(&crate::tradeoff::TradeoffInput {
+        let swept = tradeoff::tradeoff(&tradeoff::TradeoffInput {
             lifter: input.lifter,
             goal: input.goal,
             bomb_out_cap: input.bomb_out_cap,
@@ -540,10 +526,7 @@ mod tests {
             family_best: Some(swept.points[swept.best_for_search.unwrap()].plans),
             ..input
         };
-        assert_eq!(
-            run(Search::new(&given).unwrap()),
-            run(Search::new(&input).unwrap())
-        );
+        assert_eq!(search(&given).unwrap(), search(&input).unwrap());
     }
 
     #[test]

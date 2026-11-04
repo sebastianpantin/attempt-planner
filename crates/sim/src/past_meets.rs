@@ -364,10 +364,7 @@ mod tests {
                     let mut attempts = Vec::new();
                     for jump in [0.05, 0.04, 0.0] {
                         let made = rng.random::<f64>()
-                            < CURVE.strength_make_probability(
-                                crate::rules::Weight::from_kg(kg).unwrap(),
-                                day_max_kg,
-                            );
+                            < CURVE.strength_make_probability(crate::testing::kg(kg), day_max_kg);
                         attempts.push(PastAttempt { kg, made });
                         if made {
                             kg = ((kg * (1.0 + jump)) / 2.5).round() * 2.5;
