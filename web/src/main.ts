@@ -5,6 +5,7 @@ import type {
   MaxEstimate,
   Problem,
   TradeoffPoint,
+  TradeoffRequest,
   TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
 import { type AttemptNode, attemptTree } from "./attempt-tree.ts";
@@ -31,7 +32,7 @@ import {
   type LiftField,
   LIFTS,
   planValues,
-  PRECISE_SIMULATIONS,
+  sweepOnlyProblems,
 } from "./inputs.ts";
 import {
   buildEstimateRequest,
@@ -46,6 +47,7 @@ import { simulationWorker } from "./simulation.ts";
 import {
   bestForGoalLabel,
   highlightedPoints,
+  noGoalPickNote,
   shapeLabel,
 } from "./tradeoff-view.ts";
 
@@ -55,6 +57,11 @@ const LIFT_NAMES: Record<Lift, string> = {
   deadlift: "Deadlift",
 };
 const ORDINALS = ["1st", "2nd", "3rd"];
+const HEADLINE_LABELS: Record<format.Headline, string> = {
+  total: "Average total, counting a bomb-out as 0",
+  goal: "Chance of reaching the goal",
+  bombOut: "Chance of bombing out",
+};
 const TYPING_PAUSE_MS = 250;
 const count = new Intl.NumberFormat("en");
 
@@ -215,22 +222,13 @@ function showEvaluation(
     }),
   );
   const { standardErrors: errors, totalPercentilesKg: totals } = evaluation;
-  const goalRows: [string, string][] =
-    evaluation.goalProbability === undefined
-      ? []
-      : [
-          [
-            "Chance of reaching the goal",
-            format.percent(evaluation.goalProbability),
-          ],
-        ];
   const rows: [string, string][] = [
-    [
-      "Average total, counting a bomb-out as 0",
-      format.kg(evaluation.expectedTotalKg),
-    ],
-    ...goalRows,
-    ["Chance of bombing out", format.percent(evaluation.bombOutProbability)],
+    ...format
+      .headlines(evaluation)
+      .map(([headline, value]): [string, string] => [
+        HEADLINE_LABELS[headline],
+        value,
+      ]),
     [
       "Average total without a bomb-out",
       evaluation.expectedTotalWithoutBombOutKg === undefined
@@ -253,7 +251,7 @@ function showEvaluation(
   );
   byId("simulation-error").textContent = format.simulationError(
     errors,
-    simulations < PRECISE_SIMULATIONS,
+    simulations,
   );
   byId("lift-results").replaceChildren(
     ...LIFTS.map((lift) => {
@@ -283,13 +281,19 @@ const status = (id: string, text: string) => {
 };
 
 let shownEvaluation: Evaluation | undefined;
-let evaluationProblems: Problem[] = [];
-/** The sweep is the only request that checks the bomb-out cap. */
-let capProblems: Problem[] = [];
+/** Problems from the evaluation, and those only the sweep reports. */
+const problems: { evaluation: Problem[]; sweep: Problem[] } = {
+  evaluation: [],
+  sweep: [],
+};
 const showProblems = () =>
-  markProblems([...evaluationProblems, ...capProblems]);
-let shownTradeoff: Extract<TradeoffResponse, { kind: "swept" }> | undefined;
-let shownBombOutCap: number | undefined;
+  markProblems([...problems.evaluation, ...problems.sweep]);
+let shownTradeoff:
+  | {
+      sweep: Extract<TradeoffResponse, { kind: "swept" }>;
+      request: TradeoffRequest;
+    }
+  | undefined;
 
 function usePlans(plans: TradeoffPoint["plans"]) {
   for (const [name, kg] of planValues(plans)) {
@@ -300,9 +304,10 @@ function usePlans(plans: TradeoffPoint["plans"]) {
 
 function showTradeoff() {
   const view = byId("tradeoff-view");
-  view.hidden = !shownTradeoff?.points.length;
-  if (!shownTradeoff?.points.length) return;
-  const { points, bestForGoal } = shownTradeoff;
+  view.hidden = !shownTradeoff?.sweep.points.length;
+  if (!shownTradeoff?.sweep.points.length) return;
+  const { points, bestForGoal } = shownTradeoff.sweep;
+  const { bombOutCap, goalKg } = shownTradeoff.request;
   drawTradeoff(
     byId("tradeoff-chart") as unknown as SVGSVGElement,
     {
@@ -316,7 +321,12 @@ function showTradeoff() {
     (point) => usePlans(point.plans),
   );
   byId("tradeoff-legend").hidden = bestForGoal === undefined;
-  const bestLabel = bestForGoalLabel(shownBombOutCap);
+  byId("tradeoff-note").textContent = noGoalPickNote(
+    goalKg,
+    bombOutCap,
+    bestForGoal,
+  );
+  const bestLabel = bestForGoalLabel(bombOutCap);
   byId("tradeoff-best-label").textContent = bestLabel;
   byId("tradeoff-plans").replaceChildren(
     ...highlightedPoints(points, bestForGoal).map(({ point, bestForGoal }) => {
@@ -360,7 +370,7 @@ const submitEvaluation = simulationWorker("evaluate", {
     status("status", `Simulating ${count.format(request.simulations)} meets…`),
   finished(reply, request) {
     byId("results").removeAttribute("aria-busy");
-    evaluationProblems = reply.kind === "invalid" ? reply.problems : [];
+    problems.evaluation = reply.kind === "invalid" ? reply.problems : [];
     showProblems();
     shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
     showEvaluation(shownEvaluation, request.simulations);
@@ -379,20 +389,18 @@ const submitTradeoff = simulationWorker("tradeoff", {
   started: () => status("tradeoff-status", "Comparing plans…"),
   finished(reply, request) {
     byId("tradeoff").removeAttribute("aria-busy");
-    shownTradeoff = reply.kind === "swept" ? reply : undefined;
-    capProblems =
-      reply.kind === "invalid"
-        ? reply.problems.filter((problem) => problem.field === "bombOutCap")
-        : [];
+    shownTradeoff =
+      reply.kind === "swept" ? { sweep: reply, request } : undefined;
+    problems.sweep =
+      reply.kind === "invalid" ? sweepOnlyProblems(reply.problems) : [];
     showProblems();
-    shownBombOutCap = request.bombOutCap;
     showTradeoff();
     report(
       "tradeoff-status",
       reply,
       () =>
-        shownTradeoff?.points.length
-          ? `${count.format(shownTradeoff.points.length)} plans, ${count.format(request.simulations)} meets each.`
+        shownTradeoff?.sweep.points.length
+          ? `${count.format(shownTradeoff.sweep.points.length)} plans, ${count.format(request.simulations)} meets each.`
           : "No plan in the family fits these maxes.",
       "Fix the marked inputs to see the tradeoff.",
       "The comparison failed",

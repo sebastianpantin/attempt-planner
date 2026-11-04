@@ -3,7 +3,7 @@ import type { PlanShape, TradeoffPoint } from "../pkg/attempt_sim_wasm.js";
 import {
   bestForGoalLabel,
   highlightedPoints,
-  MIN_TICK_GAP,
+  noGoalPickNote,
   riskAxis,
   shapeLabel,
 } from "./tradeoff-view.ts";
@@ -70,10 +70,19 @@ describe("riskAxis", () => {
       expect(ticks.at(-1)).toBe(max);
       const positions = ticks.map((tick) => Math.sqrt(tick / max));
       const gaps = positions.slice(1).map((p, i) => p - (positions[i] ?? 0));
-      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(MIN_TICK_GAP);
+      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(0.08);
     }
     expect(riskAxis(0.155).ticks).toEqual([
       0, 0.002, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2,
     ]);
   });
+});
+
+it("explains a missing best plan only when the cap ruled every plan out", () => {
+  expect(noGoalPickNote(550, 0.05, undefined)).toBe(
+    "No plan in the family keeps the bomb-out chance within 5%, so none is marked best for the goal. Raise the highest bomb-out chance to see one.",
+  );
+  expect(noGoalPickNote(550, 0.05, 3)).toBe("");
+  expect(noGoalPickNote(undefined, 0.05, undefined)).toBe("");
+  expect(noGoalPickNote(550, undefined, undefined)).toBe("");
 });

@@ -1,4 +1,5 @@
 import type { PerLift } from "../pkg/attempt_sim_wasm.js";
+import { listOf } from "./format.ts";
 import { type FormValues, type InputName, inputName, LIFTS } from "./inputs.ts";
 
 export type Sex = "any" | "men" | "women";
@@ -100,12 +101,10 @@ const CALIBRATED_NAMES = Object.fromEntries([
   ["correlation", "correlation"],
 ]) as Record<InputName, string>;
 
-const conjunction = new Intl.ListFormat("en", { type: "conjunction" });
-
 /** Tells the lifter which of their own values a group switch left alone. */
 export function describeKept(kept: InputName[]): string {
   if (kept.length === 0) return "";
-  return `Kept your own ${kept.length === 1 ? "value" : "values"} for ${conjunction.format(kept.map((name) => CALIBRATED_NAMES[name]))}.`;
+  return `Kept your own ${kept.length === 1 ? "value" : "values"} for ${listOf(kept.map((name) => CALIBRATED_NAMES[name]))}.`;
 }
 
 export const EXAMPLE: FormValues = {

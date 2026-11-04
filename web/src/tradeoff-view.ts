@@ -30,12 +30,28 @@ export const bestForGoalLabel = (bombOutCap: number | undefined) =>
     ? "best for the goal"
     : `best for the goal within ${finePercent(bombOutCap)} bomb-out`;
 
+/** Why no plan is marked best for the goal although there is a goal, if that is so. */
+export function noGoalPickNote(
+  goalKg: number | undefined,
+  bombOutCap: number | undefined,
+  bestForGoal: number | undefined,
+): string {
+  if (
+    goalKg === undefined ||
+    bombOutCap === undefined ||
+    bestForGoal !== undefined
+  ) {
+    return "";
+  }
+  return `No plan in the family keeps the bomb-out chance within ${finePercent(bombOutCap)}, so none is marked best for the goal. Raise the highest bomb-out chance to see one.`;
+}
+
 const RISK_TICKS = [
   0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1,
 ];
 
 /** The smallest gap between risk ticks, as a share of the axis length. */
-export const MIN_TICK_GAP = 0.08;
+const MIN_TICK_GAP = 0.08;
 
 /**
  * The end of a square-root risk axis, the first round tick at or above the riskiest plan

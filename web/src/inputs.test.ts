@@ -7,6 +7,7 @@ import {
   buildTradeoffRequest,
   planValues,
   describeProblem,
+  sweepOnlyProblems,
   INPUT_NAMES,
   inputsFor,
   PRECISE_SIMULATIONS,
@@ -123,7 +124,7 @@ describe("describeProblem", () => {
     ).toBe("2nd attempt: attempt 2 is not a multiple of 2.5 kg");
   });
 
-  it("states caps in the page's percent units", () => {
+  it("states the bomb-out cap in the page's percent units", () => {
     expect(
       describeProblem({
         field: "bombOutCap",
@@ -132,6 +133,17 @@ describe("describeProblem", () => {
       }),
     ).toBe("Bomb-out cap: must be from 0 to 100%");
   });
+});
+
+it("keeps only the problems the sweep alone reports", () => {
+  const problem = (field: Problem["field"]): Problem => ({
+    field,
+    code: field === "bombOutCap" ? "invalidBombOutCap" : "invalidDayForm",
+    message: "",
+  });
+  expect(
+    sweepOnlyProblems([problem("dayForm"), problem("bombOutCap")]),
+  ).toEqual([problem("bombOutCap")]);
 });
 
 it("lists every number input once", () => {

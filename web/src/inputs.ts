@@ -58,17 +58,21 @@ const perLift = <T>(value: (lift: Lift) => T): PerLift<T> => ({
   deadlift: value("deadlift"),
 });
 
-/** The lifter, goal and bomb-out cap for the tradeoff sweep, always at the quick count. */
-export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
-  const read = (lift: Lift, field: LiftField) => values[inputName(lift, field)];
+const read = (values: FormValues, lift: Lift, field: LiftField) =>
+  values[inputName(lift, field)];
+
+/** The lifter and the optional goal, shared by every request. */
+function lifterAndGoal(
+  values: FormValues,
+): Pick<TradeoffRequest, "lifter" | "goalKg"> {
   return {
     lifter: {
       lifts: perLift((lift) => ({
-        expectedMaxKg: read(lift, "expectedMaxKg"),
+        expectedMaxKg: read(values, lift, "expectedMaxKg"),
         curve: {
-          ratioAtHalf: read(lift, "ratioAtHalf"),
-          steepness: read(lift, "steepness"),
-          technicalMissChance: read(lift, "technicalMissPercent") / 100,
+          ratioAtHalf: read(values, lift, "ratioAtHalf"),
+          steepness: read(values, lift, "steepness"),
+          technicalMissChance: read(values, lift, "technicalMissPercent") / 100,
         },
       })),
       dayForm: {
@@ -78,6 +82,26 @@ export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
       },
     },
     ...(Number.isNaN(values.goalKg) ? {} : { goalKg: values.goalKg }),
+  };
+}
+
+const plansOf = (values: FormValues): PerLift<LiftPlanKg> =>
+  perLift((lift) => ({
+    openerKg: read(values, lift, "openerKg"),
+    second: {
+      afterMakeKg: read(values, lift, "secondAfterMakeKg"),
+      afterMissKg: read(values, lift, "secondAfterMissKg"),
+    },
+    third: {
+      afterMakeKg: read(values, lift, "thirdAfterMakeKg"),
+      afterMissKg: read(values, lift, "thirdAfterMissKg"),
+    },
+  }));
+
+/** The lifter, goal and bomb-out cap for the tradeoff sweep, always at the quick count. */
+export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
+  return {
+    ...lifterAndGoal(values),
     ...(Number.isNaN(values.bombOutCapPercent)
       ? {}
       : { bombOutCap: values.bombOutCapPercent / 100 }),
@@ -90,31 +114,17 @@ export function buildRequest(
   values: FormValues,
   precise: boolean,
 ): EvaluateRequest {
-  const read = (lift: Lift, field: LiftField) => values[inputName(lift, field)];
-  const { bombOutCap, ...sweep } = buildTradeoffRequest(values);
   return {
-    ...sweep,
-    plans: perLift((lift) => ({
-      openerKg: read(lift, "openerKg"),
-      second: {
-        afterMakeKg: read(lift, "secondAfterMakeKg"),
-        afterMissKg: read(lift, "secondAfterMissKg"),
-      },
-      third: {
-        afterMakeKg: read(lift, "thirdAfterMakeKg"),
-        afterMissKg: read(lift, "thirdAfterMissKg"),
-      },
-    })),
+    ...lifterAndGoal(values),
+    plans: plansOf(values),
     simulations: precise ? PRECISE_SIMULATIONS : QUICK_SIMULATIONS,
+    seed: SEED,
   };
 }
 
-/** The lifter, goal and current plans for a search, with the bomb-out cap in percent. */
+/** The sweep's lifter, goal and bomb-out cap, with the current plans to start from. */
 export function buildSearchRequest(values: FormValues): SearchRequest {
-  return {
-    ...buildTradeoffRequest(values),
-    plans: buildRequest(values, false).plans,
-  };
+  return { ...buildTradeoffRequest(values), plans: plansOf(values) };
 }
 
 /** The plan inputs, with their values, that make `buildRequest` carry these plans. */
@@ -166,14 +176,14 @@ const FIELD_LABELS: Record<InputField, string> = {
   bombOutCap: "Bomb-out cap",
 };
 
-/** Messages restated in the page's percent units where the engine speaks in fractions. */
-const PERCENT_MESSAGES: Partial<Record<Problem["code"], string>> = {
+/** The cap is a percent on the page but a chance from 0 to 1 in the engine. */
+const PAGE_MESSAGES: Partial<Record<Problem["code"], string>> = {
   invalidBombOutCap: "must be from 0 to 100%",
-  invalidCurve:
-    "needs a positive midpoint and steepness, and a technical-miss chance from 0 to below 100%",
-  invalidDayForm:
-    "spreads must be at least 0% and combine to at most 50%, and correlation must be from 0 to 1",
 };
 
+/** The sweep's problems that only it reports, so they are not listed twice. */
+export const sweepOnlyProblems = (problems: Problem[]) =>
+  problems.filter((problem) => problem.field === "bombOutCap");
+
 export const describeProblem = ({ field, code, message }: Problem) =>
-  `${FIELD_LABELS[field]}: ${PERCENT_MESSAGES[code] ?? message}`;
+  `${FIELD_LABELS[field]}: ${PAGE_MESSAGES[code] ?? message}`;

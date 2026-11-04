@@ -1,43 +1,71 @@
 import type { StandardErrors } from "../pkg/attempt_sim_wasm.js";
+import { PRECISE_SIMULATIONS } from "./inputs.ts";
 
-const oneDecimal = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
-const percentFormat = (digits: number) =>
+const oneDecimal = new Intl.NumberFormat("en", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+const percentFormat = (
+  minimumFractionDigits: number,
+  maximumFractionDigits: number,
+) =>
   new Intl.NumberFormat("en", {
     style: "percent",
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
+    minimumFractionDigits,
+    maximumFractionDigits,
   });
-const onePercentDecimal = percentFormat(1);
-const twoPercentDecimals = percentFormat(2);
+const onePercentDecimal = percentFormat(1, 1);
+const upToTwoPercentDecimals = percentFormat(0, 2);
+const conjunction = new Intl.ListFormat("en", { type: "conjunction" });
+
+/** The smallest chance one decimal can show. */
+const SMALLEST_SHOWN = 0.0005;
 
 export const kg = (value: number) => `${oneDecimal.format(value)} kg`;
 
-/** One decimal, or two under 1% so a small chance never reads as 0.0%. Exactly 0 is 0%. */
+/** One decimal, with a chance too small to show reading "under 0.1%" rather than 0.0%. */
 export const percent = (probability: number) =>
-  probability === 0
-    ? "0%"
-    : (probability < 0.01 ? twoPercentDecimals : onePercentDecimal).format(
-        probability,
-      );
-
-const upToTwoPercentDecimals = new Intl.NumberFormat("en", {
-  style: "percent",
-  maximumFractionDigits: 2,
-});
+  probability > 0 && probability < SMALLEST_SHOWN
+    ? "under 0.1%"
+    : onePercentDecimal.format(probability);
 
 /** Up to two decimals, for axis ticks like 0.5% and 1%. */
 export const finePercent = (probability: number) =>
   upToTwoPercentDecimals.format(probability);
 
-/** One quiet line with the Monte Carlo standard errors of the headline figures. */
-export function simulationError(errors: StandardErrors, canNarrow: boolean) {
-  const parts = [
-    `±${kg(errors.expectedTotalKg)} on the total`,
-    ...(errors.goalProbability === undefined
+/** "a, b and c". */
+export const listOf = (items: string[]) => conjunction.format(items);
+
+export type Headline = "total" | "goal" | "bombOut";
+
+/** The headline figures in order, the goal chance only when there is a goal. */
+export function headlines(figures: StandardErrors): [Headline, string][] {
+  return [
+    ["total", kg(figures.expectedTotalKg)],
+    ...(figures.goalProbability === undefined
       ? []
-      : [`±${percent(errors.goalProbability)} on the goal chance`]),
-    `±${percent(errors.bombOutProbability)} on the bomb-out chance`,
+      : [["goal", percent(figures.goalProbability)] as [Headline, string]]),
+    ["bombOut", percent(figures.bombOutProbability)],
   ];
-  const listed = `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
-  return `Simulation error: about ${listed}.${canNarrow ? " Tick Precise to narrow it." : ""}`;
+}
+
+const ERROR_LABELS: Record<Headline, string> = {
+  total: "on the total",
+  goal: "on the goal chance",
+  bombOut: "on the bomb-out chance",
+};
+
+/** One quiet line with the Monte Carlo standard errors of the headline figures. */
+export function simulationError(errors: StandardErrors, simulations: number) {
+  const atLeastShown = (error: number) => Math.max(error, SMALLEST_SHOWN);
+  const parts = headlines({
+    expectedTotalKg: errors.expectedTotalKg,
+    bombOutProbability: atLeastShown(errors.bombOutProbability),
+    ...(errors.goalProbability === undefined
+      ? {}
+      : { goalProbability: atLeastShown(errors.goalProbability) }),
+  }).map(([headline, value]) => `±${value} ${ERROR_LABELS[headline]}`);
+  const narrow =
+    simulations < PRECISE_SIMULATIONS ? " Tick Precise to narrow it." : "";
+  return `Simulation error: about ${listOf(parts)}.${narrow}`;
 }
