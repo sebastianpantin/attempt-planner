@@ -174,6 +174,10 @@ pub enum TradeoffResponse {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[tsify(optional)]
         best_for_goal: Option<usize>,
+        /// Index into `points` of the plan a search starts from. Absent without points.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[tsify(optional)]
+        best_for_search: Option<usize>,
     },
     Invalid {
         problems: Vec<Problem>,
@@ -186,6 +190,7 @@ pub fn tradeoff(request: &TradeoffRequest) -> TradeoffResponse {
         Ok(result) => TradeoffResponse::Swept {
             points: result.points.into_iter().map(TradeoffPoint::from).collect(),
             best_for_goal: result.best_for_goal,
+            best_for_search: result.best_for_search,
         },
         Err(problems) => TradeoffResponse::Invalid {
             problems: problems.into_iter().map(Problem::from).collect(),
@@ -208,6 +213,11 @@ pub struct SearchRequest {
     pub bomb_out_cap: Option<f64>,
     pub simulations: u32,
     pub seed: u32,
+    /// The plans at `bestForSearch` of a tradeoff swept with the same lifter, goal, cap,
+    /// simulations and seed, so the search need not sweep again. Ignored when invalid.
+    #[serde(default)]
+    #[tsify(optional)]
+    pub family_best: Option<PerLift<LiftPlanKg>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
@@ -244,11 +254,15 @@ pub fn start_search(request: &SearchRequest) -> Result<Search, Vec<Problem>> {
     let mut problems = Vec::new();
     let lifter = read_lifter(&mut problems, &request.lifter);
     let goal = read_goal(&mut problems, request.goal_kg);
-    let mut ignored = Vec::new();
-    let start = read_plans(&mut ignored, &request.plans);
+    let readable = |plans: &PerLift<LiftPlanKg>| {
+        let mut ignored = Vec::new();
+        let plans = read_plans(&mut ignored, plans);
+        ignored.is_empty().then_some(plans)
+    };
     let input = SearchInput {
         lifter,
-        start: ignored.is_empty().then_some(start),
+        start: readable(&request.plans),
+        family_best: request.family_best.as_ref().and_then(readable),
         goal,
         bomb_out_cap: request.bomb_out_cap,
         simulations: request.simulations,
@@ -485,6 +499,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_search_from_the_swept_best_plans_finds_the_same_plans() {
+        let request = search_request();
+        let TradeoffResponse::Swept {
+            points,
+            best_for_search: Some(best),
+            ..
+        } = tradeoff(&TradeoffRequest {
+            lifter: request.lifter,
+            goal_kg: request.goal_kg,
+            bomb_out_cap: request.bomb_out_cap,
+            simulations: request.simulations,
+            seed: request.seed,
+        })
+        else {
+            panic!("expected a sweep");
+        };
+        let given = SearchRequest {
+            family_best: Some(points[best].plans),
+            ..request
+        };
+        assert_eq!(
+            run(start_search(&given).unwrap()),
+            run(start_search(&request).unwrap())
+        );
+    }
+
     fn evaluation(request: &EvaluateRequest) -> Evaluation {
         match evaluate(request) {
             EvaluateResponse::Evaluated { evaluation } => *evaluation,
@@ -622,6 +663,7 @@ mod tests {
         let TradeoffResponse::Swept {
             points,
             best_for_goal,
+            ..
         } = tradeoff(&request)
         else {
             panic!("expected points");
@@ -687,6 +729,7 @@ mod tests {
             bomb_out_cap: Some(0.05),
             simulations: 500,
             seed: 7,
+            family_best: None,
         }
     }
 

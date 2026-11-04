@@ -155,4 +155,29 @@ describe("buildSearchRequest", () => {
       buildSearchRequest({ ...EXAMPLE, bombOutCapPercent: NaN }),
     ).not.toHaveProperty("bombOutCap");
   });
+
+  it("starts from the sweep's best plans only when it is the same sweep", () => {
+    const request = buildTradeoffRequest(EXAMPLE);
+    const plans = buildRequest(EXAMPLE, false).plans;
+    const point = {
+      shape: { openerPercent: 90, secondPercent: 96, thirdPercent: 101 },
+      plans,
+      bombOutProbability: 0.01,
+      expectedTotalKg: 500,
+      onFrontier: true,
+    };
+    const sweep = {
+      kind: "swept" as const,
+      points: [point],
+      bestForSearch: 0,
+    };
+    expect(buildSearchRequest(EXAMPLE, { sweep, request }).familyBest).toBe(
+      plans,
+    );
+    const otherGoal = { ...request, goalKg: (request.goalKg ?? 0) + 5 };
+    expect(
+      buildSearchRequest(EXAMPLE, { sweep, request: otherGoal }),
+    ).not.toHaveProperty("familyBest");
+    expect(buildSearchRequest(EXAMPLE)).not.toHaveProperty("familyBest");
+  });
 });

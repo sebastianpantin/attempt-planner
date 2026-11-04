@@ -4,9 +4,10 @@ use std::ops::RangeInclusive;
 use crate::days::{StepPlan, goal_steps, record_rows};
 use crate::evaluate::{InputProblem, Lifter, MeetDays};
 use crate::lift::{Lift, PerLift};
-use crate::outcome::OutcomeTally;
+use crate::outcome::{Outcome, OutcomeTally};
 use crate::plan::{Jumps, LiftPlan};
 use crate::rules::{PLATE_STEP, Weight};
+use crate::search;
 
 const OPENER_PERCENTS: RangeInclusive<u32> = 85..=95;
 const SECOND_PERCENTS: RangeInclusive<u32> = 93..=101;
@@ -92,6 +93,16 @@ pub struct TradeoffPoint {
     pub on_frontier: bool,
 }
 
+impl TradeoffPoint {
+    pub fn outcome(&self) -> Outcome {
+        Outcome {
+            bomb_out_probability: self.bomb_out_probability,
+            expected_total_kg: self.expected_total_kg,
+            goal_probability: self.goal_probability,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tradeoff {
     pub points: Vec<TradeoffPoint>,
@@ -99,6 +110,9 @@ pub struct Tradeoff {
     /// goal, ties going to the higher expected total. Absent without a goal or without a
     /// point within the cap.
     pub best_for_goal: Option<usize>,
+    /// Index of the point a plan search starts from: the highest as the search ranks plans,
+    /// the first of any tie. Absent without points.
+    pub best_for_search: Option<usize>,
 }
 
 /// Scores every shape in the family that fits the lifter's maxes on the same simulated
@@ -198,9 +212,18 @@ pub(crate) fn sweep(days: &MeetDays, goal: Option<Weight>, bomb_out_cap: Option<
         .collect();
     mark_frontier(&mut points);
     let best_for_goal = goal.and_then(|_| best_for_goal(&points, bomb_out_cap));
+    let best_for_search = (0..points.len()).reduce(|best, index| {
+        let outcome = |index: usize| points[index].outcome();
+        if search::ranks_higher(bomb_out_cap, &outcome(index), &outcome(best)) {
+            index
+        } else {
+            best
+        }
+    });
     Tradeoff {
         points,
         best_for_goal,
+        best_for_search,
     }
 }
 
@@ -422,6 +445,20 @@ mod tests {
         assert!(safest > 0.0);
         input.bomb_out_cap = Some(safest / 2.0);
         assert_eq!(tradeoff(&input).unwrap().best_for_goal, None);
+    }
+
+    #[test]
+    fn the_search_starts_from_the_first_point_it_ranks_highest() {
+        let input = input(Some(540.0));
+        let result = tradeoff(&input).unwrap();
+        let best = result.best_for_search.unwrap();
+        let outcome = result.points[best].outcome();
+        for (index, point) in result.points.iter().enumerate() {
+            let higher = search::ranks_higher(input.bomb_out_cap, &point.outcome(), &outcome);
+            let tied_earlier = index < best
+                && !search::ranks_higher(input.bomb_out_cap, &outcome, &point.outcome());
+            assert!(!higher && !tied_earlier);
+        }
     }
 
     #[test]

@@ -22,6 +22,10 @@ pub struct SearchInput {
     pub bomb_out_cap: Option<f64>,
     pub simulations: u32,
     pub seed: u64,
+    /// The plans at `best_for_search` of a tradeoff already swept with the same lifter, goal,
+    /// cap, simulations and seed, so the search need not sweep again. Swept when absent or
+    /// invalid.
+    pub family_best: Option<PerLift<LiftPlan>>,
 }
 
 /// Plans with their outcome on the simulated meets they were scored on.
@@ -130,9 +134,8 @@ impl Search {
             input.seed,
             input.bomb_out_cap,
         )?;
-        let family = tradeoff::sweep(&days, input.goal, input.bomb_out_cap);
         let higher = |a: Found, b: Found| {
-            if rank(input.bomb_out_cap, &b.outcome) > rank(input.bomb_out_cap, &a.outcome) {
+            if ranks_higher(input.bomb_out_cap, &b.outcome, &a.outcome) {
                 b
             } else {
                 a
@@ -142,19 +145,24 @@ impl Search {
             plans,
             outcome: score(&days, &plans, input.goal),
         };
-        let family = family.points.iter().map(|point| Found {
-            plans: point.plans,
-            outcome: Outcome {
-                bomb_out_probability: point.bomb_out_probability,
-                expected_total_kg: point.expected_total_kg,
-                goal_probability: point.goal_probability,
-            },
-        });
-        let start = input
-            .start
-            .filter(|plans| plans.iter().all(|(_, plan)| plan.problems().is_empty()))
-            .map(found);
-        let best = family
+        let valid =
+            |plans: &PerLift<LiftPlan>| plans.iter().all(|(_, plan)| plan.problems().is_empty());
+        let family_best = match input.family_best.filter(valid) {
+            Some(plans) => Some(found(plans)),
+            None => {
+                let swept = tradeoff::sweep(&days, input.goal, input.bomb_out_cap);
+                swept.best_for_search.map(|index| {
+                    let point = &swept.points[index];
+                    Found {
+                        plans: point.plans,
+                        outcome: point.outcome(),
+                    }
+                })
+            }
+        };
+        let start = input.start.filter(valid).map(found);
+        let best = family_best
+            .into_iter()
             .chain(start)
             .reduce(higher)
             .unwrap_or_else(|| found(PerLift::from_fn(|_| fallback_plan())));
@@ -215,7 +223,7 @@ impl Search {
     }
 
     fn ranks_higher(&self, a: &Outcome, b: &Outcome) -> bool {
-        rank(self.bomb_out_cap, a) > rank(self.bomb_out_cap, b)
+        ranks_higher(self.bomb_out_cap, a, b)
     }
 }
 
@@ -334,6 +342,11 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
     Ok(Changes { current, changes })
 }
 
+/// Whether `a` ranks above `b` as the search ranks plans.
+pub(crate) fn ranks_higher(bomb_out_cap: Option<f64>, a: &Outcome, b: &Outcome) -> bool {
+    rank(bomb_out_cap, a) > rank(bomb_out_cap, b)
+}
+
 /// Feasible outcomes rank above those over the cap. Feasible ones rank by goal chance and
 /// then average total; the rest by lower bomb-out chance and then average total.
 fn rank(bomb_out_cap: Option<f64>, outcome: &Outcome) -> [f64; 3] {
@@ -438,6 +451,7 @@ mod tests {
             bomb_out_cap: cap,
             simulations: 2_000,
             seed: 5,
+            family_best: None,
         }
     }
 
@@ -502,6 +516,63 @@ mod tests {
         for point in family.points {
             assert!(point.goal_probability <= found.outcome.goal_probability);
         }
+    }
+
+    fn run(mut search: Search) -> Found {
+        while !search.is_done() {
+            search.step();
+        }
+        search.best()
+    }
+
+    #[test]
+    fn the_best_plans_of_the_same_sweep_give_the_same_search() {
+        let input = input(Some(540.0), Some(0.05));
+        let swept = crate::tradeoff::tradeoff(&crate::tradeoff::TradeoffInput {
+            lifter: input.lifter,
+            goal: input.goal,
+            bomb_out_cap: input.bomb_out_cap,
+            simulations: input.simulations,
+            seed: input.seed,
+        })
+        .unwrap();
+        let given = SearchInput {
+            family_best: Some(swept.points[swept.best_for_search.unwrap()].plans),
+            ..input
+        };
+        assert_eq!(
+            run(Search::new(&given).unwrap()),
+            run(Search::new(&input).unwrap())
+        );
+    }
+
+    #[test]
+    fn given_family_plans_are_used_instead_of_sweeping() {
+        let input = SearchInput {
+            start: None,
+            ..input(Some(540.0), Some(0.05))
+        };
+        let given = SearchInput {
+            family_best: Some(timid_plans()),
+            ..input
+        };
+        assert_eq!(Search::new(&given).unwrap().best().plans, timid_plans());
+        assert_ne!(Search::new(&input).unwrap().best().plans, timid_plans());
+    }
+
+    #[test]
+    fn invalid_family_plans_are_swept_again() {
+        let input = input(Some(540.0), Some(0.05));
+        let mut plans = timid_plans();
+        plans.squat.opener = kg(10.0);
+        let given = SearchInput {
+            family_best: Some(plans),
+            ..input
+        };
+        assert_eq!(
+            Search::new(&given).unwrap().best(),
+            Search::new(&input).unwrap().best()
+        );
     }
 
     #[test]

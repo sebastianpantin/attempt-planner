@@ -126,6 +126,7 @@ fn main() {
             bomb_out_cap: Some(0.05),
             simulations,
             seed,
+            family_best: None,
         })
     });
 }

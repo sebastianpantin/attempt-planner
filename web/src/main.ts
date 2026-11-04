@@ -7,8 +7,6 @@ import type {
   Percentiles,
   Problem,
   TradeoffPoint,
-  TradeoffRequest,
-  TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
 import {
   aboveMaxWarnings,
@@ -38,6 +36,8 @@ import {
   buildRequest,
   buildSearchRequest,
   buildTradeoffRequest,
+  type Swept,
+  sweepKey,
   type FormValues,
   INPUT_NAMES,
   type InputName,
@@ -464,12 +464,7 @@ const showProblems = () => {
   markProblems(shownList, simulatedValues);
   byId("to-problem").hidden = shownList.length === 0;
 };
-let shownTradeoff:
-  | {
-      sweep: Extract<TradeoffResponse, { kind: "swept" }>;
-      request: TradeoffRequest;
-    }
-  | undefined;
+let shownTradeoff: Swept | undefined;
 
 const sex = () =>
   (form.elements.namedItem("sex") as RadioNodeList).value as Sex;
@@ -656,7 +651,7 @@ function simulate(values: FormValues) {
   showAnalytics();
   submitChanges(buildSearchRequest(values));
   const sweep = buildTradeoffRequest(values);
-  const key = JSON.stringify(sweep);
+  const key = sweepKey(sweep);
   if (key !== sweptKey) {
     sweptKey = key;
     byId("tradeoff").setAttribute("aria-busy", "true");
@@ -720,7 +715,7 @@ function search(cancel: HTMLButtonElement) {
   showSearching(true);
   cancel.focus();
   searchStatus("Searching…");
-  const request = buildSearchRequest(readValues());
+  const request = buildSearchRequest(readValues(), shownTradeoff);
   stopSearch = startSearch(request, {
     progress(progress) {
       if (!progress.done) {
