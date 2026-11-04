@@ -1,5 +1,5 @@
 import type { PlanShape, TradeoffPoint } from "../pkg/attempt_sim_wasm.js";
-import { percent } from "./format.ts";
+import { finePercent } from "./format.ts";
 
 export const shapeLabel = (shape: PlanShape) =>
   `${shape.openerPercent}% / ${shape.secondPercent}% / ${shape.thirdPercent}%`;
@@ -28,7 +28,7 @@ export function highlightedPoints(
 export const bestForGoalLabel = (bombOutCap: number | undefined) =>
   bombOutCap === undefined
     ? "best for the goal"
-    : `best for the goal within ${percent(bombOutCap)} bomb-out`;
+    : `best for the goal within ${finePercent(bombOutCap)} bomb-out`;
 
 const RISK_TICKS = [
   0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1,
