@@ -275,3 +275,11 @@ caption {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+.layout > * {
+  min-width: 0;
+}
+
+#tradeoff-best-label {
+  display: inline;
+}
