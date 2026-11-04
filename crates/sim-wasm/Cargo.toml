@@ -8,8 +8,14 @@ authors.workspace = true
 repository.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-attempt-sim = { path = "../sim" }
+attempt-sim = { path = "../sim", features = ["tsify"] }
+serde = { version = "1.0.229", features = ["derive"] }
+tsify = { version = "0.5.8", default-features = false, features = ["js"] }
 wasm-bindgen = "0.2.130"
+
+[dev-dependencies]
+js-sys = "0.3.107"
+wasm-bindgen-test = "0.3.80"

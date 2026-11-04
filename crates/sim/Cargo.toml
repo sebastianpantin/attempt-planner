@@ -11,6 +11,13 @@ repository.workspace = true
 rand = { version = "0.10.3", default-features = false }
 rand_chacha = { version = "0.10.0", default-features = false }
 rand_distr = { version = "0.6.0", default-features = false, features = ["std_math"] }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+tsify = { version = "0.5.8", default-features = false, features = ["js"], optional = true }
+wasm-bindgen = { version = "0.2.130", optional = true }
 
 [dev-dependencies]
 proptest = "1.12.0"
+
+[features]
+serde = ["dep:serde"]
+tsify = ["serde", "dep:tsify", "dep:wasm-bindgen"]
