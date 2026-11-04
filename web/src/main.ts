@@ -6,12 +6,12 @@ import type {
   MaxEstimate,
   Percentiles,
   Problem,
-  SearchRequest,
   TradeoffPoint,
   TradeoffRequest,
   TradeoffResponse,
 } from "../pkg/attempt_sim_wasm.js";
 import { describePoint, drawTradeoff } from "./chart.ts";
+import { element } from "./dom.ts";
 import type { Failed } from "./engine.ts";
 import {
   CALIBRATIONS,
@@ -21,6 +21,7 @@ import {
   switchCalibration,
 } from "./example.ts";
 import * as format from "./format.ts";
+import { LIFT_NAMES, shortKg, weight } from "./format.ts";
 import {
   buildRequest,
   buildSearchRequest,
@@ -47,14 +48,15 @@ import {
   outcomeSentence,
   rangeLayout,
   ringFigure,
-  shortKg,
-  weight,
 } from "./outcome.ts";
 import {
+  BOMB_OUT_CAPS,
   bombOutCapLabel,
   bombOutCapPercent,
+  jumpLabels,
   ladder,
   problemListId,
+  sliderPosition,
 } from "./plan-view.ts";
 import { renderAnalytics } from "./analytics/analytics.ts";
 import { startSearch } from "./search-runner.ts";
@@ -67,11 +69,6 @@ import {
   shapeLabel,
 } from "./tradeoff-view.ts";
 
-const LIFT_NAMES: Record<Lift, string> = {
-  squat: "Squat",
-  bench: "Bench press",
-  deadlift: "Deadlift",
-};
 const TYPING_PAUSE_MS = 250;
 const count = new Intl.NumberFormat("en");
 const CONTROL_NAMES = new Set<string>([
@@ -87,41 +84,60 @@ const summaryBar = byId("summary-bar");
 const input = (name: InputName | "precise" | "noBombOutCap") =>
   form.elements.namedItem(name) as HTMLInputElement;
 
-/** A number input between −/+ buttons; the buttons stay out of the tab order as arrow keys step the input. */
+/**
+ * A number input between −/+ buttons; the buttons stay out of the tab order as arrow keys
+ * step the input. A jump shows signed, "+12.5" or "repeat", while it is not being edited.
+ */
 function stepper(lift: Lift, field: LiftField, label: string): string {
-  const repeat = field.endsWith("AfterMissKg")
-    ? '<span class="repeat" aria-hidden="true">repeat</span>'
-    : "";
+  const shownJump =
+    field === "openerKg"
+      ? ""
+      : '<span class="shown-jump" aria-hidden="true"></span>';
   return `
     <span class="stepper">
       <button type="button" tabindex="-1" data-step="-1" aria-label="${label}: 2.5 kg less">−</button>
       <span class="stepper-value">
         <input name="${inputName(lift, field)}" type="number" min="${field === "openerKg" ? 20 : 0}"
-          step="2.5" aria-label="${label} (kg)" />${repeat}
+          step="2.5" aria-label="${label} (kg)" />${shownJump}
       </span>
       <button type="button" tabindex="-1" data-step="1" aria-label="${label}: 2.5 kg more">+</button>
     </span>`;
 }
 
-function attemptCard(lift: Lift, attempt: "2nd" | "3rd"): string {
-  const name = LIFT_NAMES[lift];
-  const jump = (outcome: "Make" | "Miss") =>
-    stepper(
-      lift,
-      `${attempt === "2nd" ? "second" : "third"}After${outcome}Kg`,
-      `${name} ${attempt} attempt jump after a ${outcome.toLowerCase()}`,
-    );
+const ATTEMPT_JUMPS = [
+  {
+    attempt: "2nd",
+    afterMake: "secondAfterMakeKg",
+    afterMiss: "secondAfterMissKg",
+  },
+  {
+    attempt: "3rd",
+    afterMake: "thirdAfterMakeKg",
+    afterMiss: "thirdAfterMissKg",
+  },
+] as const satisfies {
+  attempt: string;
+  afterMake: LiftField;
+  afterMiss: LiftField;
+}[];
+
+function attemptCard(
+  lift: Lift,
+  { attempt, afterMake, afterMiss }: (typeof ATTEMPT_JUMPS)[number],
+): string {
+  const label = (outcome: string) =>
+    `${LIFT_NAMES[lift].full} ${attempt} attempt jump after a ${outcome}`;
   return `
     <div class="attempt">
       <p class="n">${attempt}</p>
       <p class="kg"><span id="${lift}-${attempt}"></span> <small>kg if made</small></p>
-      <div class="jump"><span class="tag make" aria-hidden="true">✓ made</span>${jump("Make")}</div>
-      <div class="jump"><span class="tag miss" aria-hidden="true">✗ missed</span>${jump("Miss")}</div>
+      <div class="jump"><span class="tag make" aria-hidden="true">✓ made</span>${stepper(lift, afterMake, label("make"))}</div>
+      <div class="jump"><span class="tag miss" aria-hidden="true">✗ missed</span>${stepper(lift, afterMiss, label("miss"))}</div>
     </div>`;
 }
 
 function liftCard(lift: Lift, index: number): string {
-  const name = LIFT_NAMES[lift];
+  const name = LIFT_NAMES[lift].full;
   return `
     <details class="lift"${index === 0 ? " open" : ""}>
       <summary>
@@ -135,8 +151,7 @@ function liftCard(lift: Lift, index: number): string {
           ${stepper(lift, "openerKg", `${name} opener`)}
           <p class="note" id="${lift}-share"></p>
         </div>
-        ${attemptCard(lift, "2nd")}
-        ${attemptCard(lift, "3rd")}
+        ${ATTEMPT_JUMPS.map((jumps) => attemptCard(lift, jumps)).join("")}
       </div>
       <p class="path" id="${lift}-paths"></p>
       <ul class="problems" id="${lift}-problems"></ul>
@@ -145,7 +160,7 @@ function liftCard(lift: Lift, index: number): string {
 
 const maxField = (lift: Lift) => `
   <label class="field">
-    <span>${LIFT_NAMES[lift]}<span class="visually-hidden"> expected max</span></span>
+    <span>${LIFT_NAMES[lift].full}<span class="visually-hidden"> expected max</span></span>
     <span class="input big">
       <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5" />
       <span aria-hidden="true">kg</span>
@@ -153,7 +168,7 @@ const maxField = (lift: Lift) => `
   </label>`;
 
 function curveRow(lift: Lift): string {
-  const name = LIFT_NAMES[lift];
+  const name = LIFT_NAMES[lift].full;
   return `
     <tr>
       <th scope="row">${name}</th>
@@ -175,10 +190,17 @@ byId("curves").innerHTML = `
     <tbody>${LIFTS.map(curveRow).join("")}</tbody>
   </table>`;
 
-for (const name of INPUT_NAMES) input(name).valueAsNumber = EXAMPLE[name];
-
 const bombOutCapSlider = input("bombOutCapPercent");
+bombOutCapSlider.max = String(BOMB_OUT_CAPS.length - 1);
 const noBombOutCap = input("noBombOutCap");
+
+/** Sets an input; the cap slider takes the position of the cap. */
+function setInput(name: InputName, value: number) {
+  input(name).valueAsNumber =
+    name === "bombOutCapPercent" ? sliderPosition(value) : value;
+}
+
+for (const name of INPUT_NAMES) setInput(name, EXAMPLE[name]);
 
 const readValues = () =>
   ({
@@ -201,42 +223,27 @@ function showBombOutCap() {
   bombOutCapSlider.setAttribute("aria-valuetext", label);
 }
 
-function listItem(text: string): HTMLLIElement {
-  const item = document.createElement("li");
-  item.textContent = text;
-  return item;
-}
-
-function strong(text: string): HTMLElement {
-  const element = document.createElement("b");
-  element.textContent = text;
-  return element;
-}
-
-const REPEAT_FIELDS = ["secondAfterMissKg", "thirdAfterMissKg"] as const;
+const strong = (text: string) => element("b", "", text);
 
 function showPlans(values: FormValues) {
   const { plans } = buildRequest(values, false);
   for (const lift of LIFTS) {
     const view = ladder(plans[lift], values[inputName(lift, "expectedMaxKg")]);
-    const shown = (kg: number | undefined) =>
-      kg === undefined ? "–" : weight(kg);
-    byId(`${lift}-2nd`).textContent = shown(view.secondKg);
-    byId(`${lift}-3rd`).textContent = shown(view.thirdKg);
-    byId(`${lift}-share`).textContent = view.shareOfMax ?? "";
-    byId(`${lift}-line`).textContent = view.line ? `· ${view.line}` : "";
+    byId(`${lift}-2nd`).textContent = view.secondKg;
+    byId(`${lift}-3rd`).textContent = view.thirdKg;
+    byId(`${lift}-share`).textContent = view.shareOfMax;
+    byId(`${lift}-line`).textContent = view.line;
     byId(`${lift}-paths`).replaceChildren(
       ...view.paths.map(([label, weights]) => {
-        const item = document.createElement("span");
-        item.append(`${label}: `, strong(weights));
+        const item = element("span", "", `${label}: `);
+        item.append(strong(weights));
         return item;
       }),
     );
-    for (const field of REPEAT_FIELDS) {
-      const jump = input(inputName(lift, field));
-      jump
-        .closest(".stepper")!
-        .toggleAttribute("data-repeat", jump.valueAsNumber === 0);
+    for (const [name, label] of jumpLabels(values, lift)) {
+      const stepper = input(name).closest(".stepper")!;
+      stepper.toggleAttribute("data-shown", label !== undefined);
+      stepper.querySelector(".shown-jump")!.textContent = label ?? "";
     }
   }
 }
@@ -250,7 +257,7 @@ function markProblems(problems: Problem[]) {
     list.replaceChildren();
   }
   for (const [index, problem] of problems.entries()) {
-    const item = listItem(describeProblem(problem));
+    const item = element("li", "", describeProblem(problem));
     item.id = `problem-${index}`;
     for (const name of inputsFor(problem)) {
       const marked = input(name);
@@ -295,7 +302,7 @@ function showEvaluation(
   showRange(evaluation.totalPercentilesKg, goalKg);
   byId("summary-bar-figures").replaceChildren(
     ...barFigures(evaluation, goalKg).map(([value, meaning]) => {
-      const figure = document.createElement("span");
+      const figure = element("span");
       figure.append(strong(value), ` ${meaning}`);
       return figure;
     }),
@@ -320,7 +327,7 @@ function showEvaluation(
       const row = document.createElement("tr");
       const heading = document.createElement("th");
       heading.scope = "row";
-      heading.textContent = LIFT_NAMES[lift];
+      heading.textContent = LIFT_NAMES[lift].full;
       row.append(heading);
       row.insertCell().textContent = format.percent(makeProbability);
       row.insertCell().textContent =
@@ -350,34 +357,24 @@ const status = (id: string, text: string) => {
   byId(id).textContent = text;
 };
 
-let shownEvaluation: Evaluation | undefined;
-let evaluatedGoalKg: number | undefined;
+/** The evaluation shown, with the goal it was simulated for. */
+let shown: { evaluation: Evaluation; goalKg?: number } | undefined;
 /** Single changes to the plans shown, cleared while newer plans are being simulated. */
-let shownChanges:
-  | {
-      reply: Extract<ChangesResponse, { kind: "changed" }>;
-      request: SearchRequest;
-    }
-  | undefined;
+let shownChanges: Extract<ChangesResponse, { kind: "changed" }> | undefined;
 
 function showAnalytics() {
-  const section = byId("analytics");
-  section.hidden = !shownEvaluation;
-  if (!shownEvaluation) return;
+  byId("analytics").hidden = !shown;
+  if (!shown) return;
   renderAnalytics(byId("analytics-panels"), {
-    evaluation: shownEvaluation,
-    goalKg: evaluatedGoalKg,
-    ...(shownChanges && {
-      changes: shownChanges.reply,
-      bombOutCap: shownChanges.request.bombOutCap,
-    }),
+    ...shown,
+    ...(shownChanges && { changes: shownChanges }),
     onApply: usePlans,
   });
 }
 let resultsInView = false;
 /** The summary bar stands in for the results while they are out of sight. */
 const updateSummaryBar = () => {
-  summaryBar.hidden = !shownEvaluation || resultsInView;
+  summaryBar.hidden = !shown || resultsInView;
 };
 new IntersectionObserver(([entry]) => {
   resultsInView = entry?.isIntersecting ?? false;
@@ -399,7 +396,7 @@ let shownTradeoff:
 
 function usePlans(plans: TradeoffPoint["plans"]) {
   for (const [name, kg] of planValues(plans)) {
-    input(name).valueAsNumber = kg;
+    setInput(name, kg);
   }
   update();
 }
@@ -415,9 +412,9 @@ function showTradeoff() {
     {
       points,
       bestForGoal,
-      current: shownEvaluation && {
-        bombOutProbability: shownEvaluation.bombOutProbability,
-        expectedTotalKg: shownEvaluation.expectedTotalKg,
+      current: shown && {
+        bombOutProbability: shown.evaluation.bombOutProbability,
+        expectedTotalKg: shown.evaluation.expectedTotalKg,
       },
     },
     (point) => usePlans(point.plans),
@@ -474,9 +471,11 @@ const submitEvaluation = simulationWorker("evaluate", {
     byId("results").removeAttribute("aria-busy");
     problems.evaluation = reply.kind === "invalid" ? reply.problems : [];
     showProblems();
-    shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
-    evaluatedGoalKg = request.goalKg;
-    showEvaluation(shownEvaluation, request);
+    shown =
+      reply.kind === "evaluated"
+        ? { evaluation: reply.evaluation, goalKg: request.goalKg }
+        : undefined;
+    showEvaluation(shown?.evaluation, request);
     showAnalytics();
     showTradeoff();
     report(
@@ -514,8 +513,8 @@ const submitTradeoff = simulationWorker("tradeoff", {
 
 const submitChanges = simulationWorker("changes", {
   started: () => {},
-  finished(reply, request) {
-    shownChanges = reply.kind === "changed" ? { reply, request } : undefined;
+  finished(reply) {
+    shownChanges = reply.kind === "changed" ? reply : undefined;
     showAnalytics();
   },
 });
@@ -546,41 +545,63 @@ function update() {
 }
 
 const findButton = byId("find-plan") as HTMLButtonElement;
-const barFindButton = byId("bar-find-plan") as HTMLButtonElement;
 const cancelButton = byId("cancel-search") as HTMLButtonElement;
+const barFindButton = byId("bar-find-plan") as HTMLButtonElement;
+const barCancelButton = byId("bar-cancel-search") as HTMLButtonElement;
 let stopSearch: (() => void) | undefined;
+
+/** The search's status, shown in the bottom bar too while it runs. */
+function searchStatus(text: string) {
+  status("search-status", text);
+  status("bar-search-status", text);
+}
+
+/** Shows the search running or not, in the outcome card and the bottom bar. */
+function showSearching(searching: boolean) {
+  findButton.disabled = barFindButton.disabled = searching;
+  cancelButton.hidden = barCancelButton.hidden = !searching;
+  barFindButton.hidden = searching;
+  byId("summary-bar-figures").hidden = searching;
+  byId("bar-search-status").hidden = !searching;
+}
 
 function searchEnded(message: string) {
   stopSearch = undefined;
-  findButton.disabled = barFindButton.disabled = false;
-  if (document.activeElement === cancelButton) findButton.focus();
-  cancelButton.hidden = true;
-  status("search-status", message);
+  const focused = document.activeElement;
+  showSearching(false);
+  if (focused === cancelButton) findButton.focus();
+  if (focused === barCancelButton) barFindButton.focus();
+  searchStatus(message);
 }
 
-findButton.addEventListener("click", () => {
-  findButton.disabled = barFindButton.disabled = true;
-  cancelButton.hidden = false;
-  cancelButton.focus();
-  status("search-status", "Searching…");
-  stopSearch = startSearch(buildSearchRequest(readValues()), {
+/** Starts a search, moving focus to the Cancel button next to the one pressed. */
+function search(cancel: HTMLButtonElement) {
+  showSearching(true);
+  cancel.focus();
+  searchStatus("Searching…");
+  const request = buildSearchRequest(readValues());
+  stopSearch = startSearch(request, {
     progress(progress) {
       if (!progress.done) {
-        status("search-status", describeSearch(progress));
+        searchStatus(describeSearch(progress));
         return;
       }
       usePlans(progress.plans);
-      searchEnded(describeSearch(progress));
+      searchEnded(describeSearch(progress, request.bombOutCap));
     },
     failed: (message) => searchEnded(`The search failed: ${message}`),
   });
-});
+}
 
-cancelButton.addEventListener("click", () => {
+function cancelSearch() {
   stopSearch?.();
   searchEnded("Search cancelled. The plan is unchanged.");
-});
-barFindButton.addEventListener("click", () => findButton.click());
+}
+
+findButton.addEventListener("click", () => search(cancelButton));
+barFindButton.addEventListener("click", () => search(barCancelButton));
+cancelButton.addEventListener("click", cancelSearch);
+barCancelButton.addEventListener("click", cancelSearch);
 
 const compareButton = byId("compare-plans");
 compareButton.addEventListener("click", () => {
@@ -631,8 +652,10 @@ function showEstimate(estimate: MaxEstimate | undefined) {
           const found = estimate.lifts[lift];
           return found
             ? [
-                listItem(
-                  `${LIFT_NAMES[lift]}: ${format.kg(found.expectedMaxKg)} ± ${format.percent(found.uncertainty)}, from ${count.format(found.meets)} ${found.meets === 1 ? "meet" : "meets"}`,
+                element(
+                  "li",
+                  "",
+                  `${LIFT_NAMES[lift].full}: ${format.kg(found.expectedMaxKg)} ± ${format.percent(found.uncertainty)}, from ${count.format(found.meets)} ${found.meets === 1 ? "meet" : "meets"}`,
                 ),
               ]
             : [];
@@ -686,8 +709,7 @@ estimateButton.addEventListener("click", () => {
 });
 
 useEstimateButton.addEventListener("click", () => {
-  for (const [name, value] of estimatedValues)
-    input(name).valueAsNumber = value;
+  for (const [name, value] of estimatedValues) setInput(name, value);
   update();
 });
 
@@ -701,7 +723,7 @@ form.addEventListener("input", (event) => {
       sex(),
     );
     calibratedSex = sex();
-    for (const [name, value] of changes) input(name).valueAsNumber = value;
+    for (const [name, value] of changes) setInput(name, value);
     status("sex-status", describeKept(kept));
   }
   if (stopSearch) {

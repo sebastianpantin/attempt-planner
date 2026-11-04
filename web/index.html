@@ -57,8 +57,7 @@
                 name="bombOutCapPercent"
                 type="range"
                 min="0"
-                max="30"
-                step="0.5"
+                step="1"
               />
               <span class="labels" aria-hidden="true">
                 <span>Safe</span><span>Bold</span>
@@ -81,7 +80,7 @@
           <h2 class="step" id="maxes-heading"><b>2</b> Your maxes</h2>
           <div class="row" id="maxes"></div>
           <ul class="problems" id="maxes-problems"></ul>
-          <details id="past-meets-panel" class="past-meets">
+          <details class="past-meets">
             <summary>
               <span class="note">Not sure?</span>
               <span class="link">Estimate them from your past meets</span>
@@ -327,8 +326,12 @@
     </main>
     <aside id="summary-bar" aria-label="Results summary" hidden>
       <p id="summary-bar-figures"></p>
+      <p id="bar-search-status" hidden></p>
       <button type="button" class="btn primary" id="bar-find-plan">
         Best plan
+      </button>
+      <button type="button" class="btn secondary" id="bar-cancel-search" hidden>
+        Cancel
       </button>
     </aside>
   </body>

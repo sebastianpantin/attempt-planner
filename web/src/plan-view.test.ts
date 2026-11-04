@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { EXAMPLE } from "./example.ts";
 import {
+  BOMB_OUT_CAPS,
   bombOutCapLabel,
   bombOutCapPercent,
+  jumpLabels,
   ladder,
   problemListId,
+  sliderPosition,
 } from "./plan-view.ts";
 
 const plan = {
@@ -15,10 +19,10 @@ const plan = {
 describe("ladder", () => {
   it("gives the weights if every attempt is made, the opener's share of the max and the main paths", () => {
     expect(ladder(plan, 200)).toEqual({
-      secondKg: 195,
-      thirdKg: 202.5,
+      secondKg: "195",
+      thirdKg: "202.5",
       shareOfMax: "91% of your max",
-      line: "182.5 → 195 → 202.5",
+      line: "· 182.5 → 195 → 202.5",
       paths: [
         ["All made", "182.5 → 195 → 202.5"],
         ["Miss the opener", "182.5 → 182.5 → 190"],
@@ -27,26 +31,68 @@ describe("ladder", () => {
     });
   });
 
-  it("leaves out what a missing weight or max makes unknown", () => {
+  it("shows a dash for attempts a missing weight makes unknown, and leaves out the rest", () => {
     expect(ladder({ ...plan, openerKg: Number.NaN }, Number.NaN)).toEqual({
+      secondKg: "–",
+      thirdKg: "–",
+      shareOfMax: "",
+      line: "",
       paths: [],
     });
-    expect(ladder(plan, Number.NaN).shareOfMax).toBeUndefined();
+    expect(ladder(plan, Number.NaN).shareOfMax).toBe("");
   });
 });
 
-describe("bombOutCapPercent", () => {
-  it("reads the slider, or no cap when there is no limit", () => {
-    expect(bombOutCapPercent(5, false)).toBe(5);
-    expect(bombOutCapPercent(5, true)).toBeNaN();
+describe("jumpLabels", () => {
+  it("signs each jump, reads 0 after a miss as a repeat and shows nothing over an empty input", () => {
+    expect(
+      jumpLabels(
+        {
+          ...EXAMPLE,
+          "bench-secondAfterMakeKg": 12.5,
+          "bench-secondAfterMissKg": 0,
+          "bench-thirdAfterMakeKg": Number.NaN,
+          "bench-thirdAfterMissKg": 2.5,
+        },
+        "bench",
+      ),
+    ).toEqual([
+      ["bench-secondAfterMakeKg", "+12.5"],
+      ["bench-secondAfterMissKg", "repeat"],
+      ["bench-thirdAfterMakeKg", undefined],
+      ["bench-thirdAfterMissKg", "+2.5"],
+    ]);
   });
 });
 
-describe("bombOutCapLabel", () => {
+describe("the bomb-out cap slider", () => {
+  it("runs from 0 to 100% in half-percent steps up to 10%, coarser above", () => {
+    expect(BOMB_OUT_CAPS[0]).toBe(0);
+    expect(BOMB_OUT_CAPS.slice(1, 4)).toEqual([0.5, 1, 1.5]);
+    expect(BOMB_OUT_CAPS.at(-1)).toBe(100);
+    expect(BOMB_OUT_CAPS).toContain(10);
+    expect(BOMB_OUT_CAPS).toContain(30);
+    expect(
+      BOMB_OUT_CAPS.every((cap, i) => i === 0 || cap > BOMB_OUT_CAPS[i - 1]!),
+    ).toBe(true);
+  });
+
+  it("reads the slider's cap, or no cap when there is no limit", () => {
+    expect(bombOutCapPercent(sliderPosition(5), false)).toBe(5);
+    expect(bombOutCapPercent(sliderPosition(60), false)).toBe(60);
+    expect(bombOutCapPercent(sliderPosition(5), true)).toBeNaN();
+    expect(bombOutCapPercent(1000, false)).toBe(100);
+  });
+
+  it("puts a cap between steps on the nearest one", () => {
+    expect(BOMB_OUT_CAPS[sliderPosition(61)]).toBe(60);
+    expect(BOMB_OUT_CAPS[sliderPosition(2.4)]).toBe(2.5);
+  });
+
   it("shows the cap as a percentage, or no limit", () => {
-    expect(bombOutCapLabel(5, false)).toBe("5%");
-    expect(bombOutCapLabel(2.5, false)).toBe("2.5%");
-    expect(bombOutCapLabel(5, true)).toBe("No limit");
+    expect(bombOutCapLabel(sliderPosition(5), false)).toBe("5%");
+    expect(bombOutCapLabel(sliderPosition(2.5), false)).toBe("2.5%");
+    expect(bombOutCapLabel(sliderPosition(5), true)).toBe("No limit");
   });
 });
 

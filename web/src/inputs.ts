@@ -36,6 +36,18 @@ const MEET_FIELDS = [
 ] as const;
 
 export type LiftField = (typeof LIFT_FIELDS)[number];
+
+/** The jumps to the 2nd and 3rd attempts, after a make and after a miss. */
+export const JUMP_FIELDS = [
+  "secondAfterMakeKg",
+  "secondAfterMissKg",
+  "thirdAfterMakeKg",
+  "thirdAfterMissKg",
+] as const satisfies LiftField[];
+
+/** Jumps after a miss, where 0 repeats the missed weight. */
+export const isRepeatJump = (field: LiftField) =>
+  field === "secondAfterMissKg" || field === "thirdAfterMissKg";
 export type MeetField = (typeof MEET_FIELDS)[number];
 export type InputName = `${Lift}-${LiftField}` | MeetField;
 

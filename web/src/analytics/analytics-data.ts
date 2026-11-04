@@ -9,17 +9,13 @@ import type {
   Setting,
   TotalShare,
 } from "../../pkg/attempt_sim_wasm.js";
-import { kg, percent } from "../format.ts";
+import { kg, LIFT_NAMES, percent, roundChanceUp } from "../format.ts";
 import { LIFTS } from "../inputs.ts";
+import type { KnownGoal } from "../outcome.ts";
 
-export const LIFT_NAMES: Record<Lift, string> = {
-  squat: "Squat",
-  bench: "Bench",
-  deadlift: "Deadlift",
-};
-
-const BIN_WIDTHS = [5, 10, 20, 50];
-const MAX_BINS = 30;
+/** At least 10 kg, so every bin spans four 2.5 kg totals and the bars do not alternate. */
+const BIN_WIDTHS = [10, 20, 25, 50];
+const MAX_BINS = 24;
 
 export interface Bin {
   fromKg: number;
@@ -34,7 +30,7 @@ export interface Histogram {
 }
 
 /**
- * The totals in bins of 5 kg or wider, bomb-outs apart. Bin edges line up with the goal,
+ * The totals in bins of 10 kg or wider, bomb-outs apart. Bin edges line up with the goal,
  * so every bin is wholly at or above it or wholly short of it.
  */
 export function histogram(totals: TotalShare[], goalKg?: number): Histogram {
@@ -67,6 +63,32 @@ export function histogram(totals: TotalShare[], goalKg?: number): Histogram {
   return { bombOutShare, bins };
 }
 
+/** The bin most totals land in. */
+export const tallestBin = (bins: Bin[]) =>
+  bins.reduce<Bin | undefined>(
+    (tallest, bin) => (!tallest || bin.share > tallest.share ? bin : tallest),
+    undefined,
+  );
+
+/** Label every so many bins, keeping about nine labels at most. */
+export const labelEvery = (bins: number) => Math.max(1, Math.ceil(bins / 9));
+
+/** The histogram in words, for its accessible name. */
+export function histogramLabel(
+  { bombOutShare, bins }: Histogram,
+  goal?: KnownGoal,
+): string {
+  const tallest = tallestBin(bins);
+  return [
+    `Histogram of simulated totals. Bomb-out ${percent(bombOutShare)}.`,
+    tallest &&
+      `Totals from ${kg(bins[0]!.fromKg)} to ${kg(bins.at(-1)!.toKg)}, most often ${kg(tallest.fromKg)} to ${kg(tallest.toKg)}.`,
+    goal && `${percent(goal.chance)} at or above the goal of ${kg(goal.kg)}.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export interface ChancePoint {
   totalKg: number;
   chance: number;
@@ -77,6 +99,38 @@ export const chanceOfAtLeast = (totals: TotalShare[], totalKg: number) =>
   totals
     .filter((total) => total.totalKg >= totalKg)
     .reduce((sum, total) => sum + total.share, 0);
+
+/** A total and the chance of reaching it, "560.0 kg: 48.2%". */
+export const totalCheck = (totals: TotalShare[], totalKg: number) =>
+  `${kg(totalKg)}: ${percent(chanceOfAtLeast(totals, totalKg))}`;
+
+/** The reach curve in words, for its accessible name. */
+export function reachLabel(points: ChancePoint[], goal?: KnownGoal): string {
+  const first = points[0];
+  const last = points.at(-1);
+  return [
+    "Chance of reaching each total.",
+    first && last
+      ? `${percent(first.chance)} reach ${kg(first.totalKg)}, falling to ${percent(last.chance)} at ${kg(last.totalKg)}.`
+      : "Every simulated meet bombs out.",
+    goal && `${percent(goal.chance)} reach the goal of ${kg(goal.kg)}.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+const TOTAL_STEP = 2.5;
+
+/**
+ * The range of the slider that checks any total: from the lowest to the highest total
+ * that came up, starting at `wantedKg` moved onto a 2.5 kg step within it.
+ */
+export function totalCheckRange(points: ChancePoint[], wantedKg: number) {
+  const min = points[0]!.totalKg;
+  const max = points.at(-1)!.totalKg;
+  const stepped = Math.round(wantedKg / TOTAL_STEP) * TOTAL_STEP;
+  return { min, max, value: Math.min(Math.max(stepped, min), max) };
+}
 
 /** The chance of a total at least as high as each total that came up, bomb-outs left out. */
 export function reachCurve(totals: TotalShare[]): ChancePoint[] {
@@ -103,9 +157,19 @@ export interface BombOutRisk {
   hint: string;
 }
 
-const RISK_SCALES = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+/** The share of the summed risk from which one lift carries most of it. */
+const MOST_OF_THE_RISK = 0.5;
 
-/** Each lift's bomb-out chance split by cause, and a line naming the riskiest lift. */
+function riskAdvice({ lift, technical, tooHeavy }: LiftRisk): string {
+  return tooHeavy >= technical
+    ? `A lighter ${LIFT_NAMES[lift].full.toLowerCase()} opener is the cheapest fix.`
+    : "Most of it is technical misses, so cleaner technique helps more than lighter weights.";
+}
+
+/**
+ * Each lift's bomb-out chance split by cause, and a line naming the riskiest lift, with
+ * advice when it carries most of the risk.
+ */
 export function bombOutRisk(lifts: PerLift<LiftSummary>): BombOutRisk {
   const risks = LIFTS.map((lift): LiftRisk => {
     const total = 1 - lifts[lift].makeProbability;
@@ -114,13 +178,17 @@ export function bombOutRisk(lifts: PerLift<LiftSummary>): BombOutRisk {
   });
   const summed = risks.reduce((sum, risk) => sum + risk.total, 0);
   const riskiest = risks.reduce((a, b) => (b.total > a.total ? b : a));
+  const share = riskiest.total / summed;
   return {
     lifts: risks,
-    scaleMax: RISK_SCALES.find((scale) => scale >= riskiest.total - 1e-9) ?? 1,
+    scaleMax: roundChanceUp(Math.max(riskiest.total, 0.01)),
     hint:
       summed === 0
         ? "No lift bombed out in the simulated meets."
-        : `${LIFT_NAMES[riskiest.lift]} carries ${percent(riskiest.total / summed)} of the bomb-out risk.`,
+        : [
+            `${LIFT_NAMES[riskiest.lift].full} carries ${percent(share)} of the bomb-out risk.`,
+            ...(share >= MOST_OF_THE_RISK ? [riskAdvice(riskiest)] : []),
+          ].join(" "),
   };
 }
 
@@ -167,29 +235,40 @@ export function dayView(evaluation: Evaluation): DayView {
   return { badKg: p10, normalKg: p50, goodKg: p90, bestPossibleKg };
 }
 
-const ATTEMPT_NAMES: Record<Setting, [string, string]> = {
-  opener: ["opener", ""],
-  secondAfterMake: ["2nd", " after a make"],
-  secondAfterMiss: ["2nd", " after a miss"],
-  thirdAfterMake: ["3rd", " after a make"],
-  thirdAfterMiss: ["3rd", " after a miss"],
+/** Each setting's attempt, when it applies and its weight in a plan. */
+const SETTINGS: Record<
+  Setting,
+  { attempt: string; after: string; kg: (plan: LiftPlanKg) => number }
+> = {
+  opener: { attempt: "opener", after: "", kg: (plan) => plan.openerKg },
+  secondAfterMake: {
+    attempt: "2nd",
+    after: " after a make",
+    kg: (plan) => plan.second.afterMakeKg,
+  },
+  secondAfterMiss: {
+    attempt: "2nd",
+    after: " after a miss",
+    kg: (plan) => plan.second.afterMissKg,
+  },
+  thirdAfterMake: {
+    attempt: "3rd",
+    after: " after a make",
+    kg: (plan) => plan.third.afterMakeKg,
+  },
+  thirdAfterMiss: {
+    attempt: "3rd",
+    after: " after a miss",
+    kg: (plan) => plan.third.afterMissKg,
+  },
 };
 
-const settingKg = (plan: LiftPlanKg, setting: Setting) =>
-  ({
-    opener: plan.openerKg,
-    secondAfterMake: plan.second.afterMakeKg,
-    secondAfterMiss: plan.second.afterMissKg,
-    thirdAfterMake: plan.third.afterMakeKg,
-    thirdAfterMiss: plan.third.afterMissKg,
-  })[setting];
-
-/** A change in words, such as "Bench 3rd: +5.0 kg instead of +7.5 kg after a make". */
+/** A change in words, such as "Bench press 3rd: +5.0 kg instead of +7.5 kg after a make". */
 export function describeChange(change: Change, current: PlanOutcome): string {
-  const [attempt, after] = ATTEMPT_NAMES[change.setting];
+  const { attempt, after, kg: settingKg } = SETTINGS[change.setting];
   const sign = change.setting === "opener" ? "" : "+";
-  const before = settingKg(current.plans[change.lift], change.setting);
-  return `${LIFT_NAMES[change.lift]} ${attempt}: ${sign}${kg(change.weightKg)} instead of ${sign}${kg(before)}${after}`;
+  const before = settingKg(current.plans[change.lift]);
+  return `${LIFT_NAMES[change.lift].full} ${attempt}: ${sign}${kg(change.weightKg)} instead of ${sign}${kg(before)}${after}`;
 }
 
 /** Changes in chance smaller than one shown decimal read as no change. */
@@ -214,24 +293,6 @@ export function delta(label: string, change: number, better: 1 | -1): Delta {
   };
 }
 
-/** Same order as the engine's search: within the cap first, then goal chance, then average total. */
-function rank(outcome: PlanOutcome, bombOutCap?: number): number[] {
-  const feasible =
-    bombOutCap === undefined || outcome.bombOutProbability <= bombOutCap;
-  if (!feasible)
-    return [0, -outcome.bombOutProbability, outcome.expectedTotalKg];
-  return [
-    1,
-    outcome.goalProbability ?? outcome.expectedTotalKg,
-    outcome.expectedTotalKg,
-  ];
-}
-
-const ranksHigher = (a: number[], b: number[]) => {
-  const index = a.findIndex((value, i) => value !== b[i]);
-  return index >= 0 && a[index]! > b[index]!;
-};
-
 export interface WhatIf {
   text: string;
   goal?: Delta;
@@ -242,18 +303,11 @@ export interface WhatIf {
 const WHAT_IFS = 3;
 
 /**
- * Up to three changes: those ranking above the current plan, best first, then those
- * cutting the bomb-out chance most.
+ * Up to three changes: those the engine ranks above the current plan, best first, then
+ * those cutting the bomb-out chance most.
  */
-export function whatIfs(
-  current: PlanOutcome,
-  changes: Change[],
-  bombOutCap?: number,
-): WhatIf[] {
-  const currentRank = rank(current, bombOutCap);
-  const improving = changes.filter((change) =>
-    ranksHigher(rank(change.result, bombOutCap), currentRank),
-  );
+export function whatIfs(current: PlanOutcome, changes: Change[]): WhatIf[] {
+  const improving = changes.filter((change) => change.improves);
   const safer = changes
     .filter(
       (change) =>

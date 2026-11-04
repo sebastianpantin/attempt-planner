@@ -5,7 +5,6 @@ import {
   outcomeSentence,
   rangeLayout,
   ringFigure,
-  shortKg,
 } from "./outcome.ts";
 
 const figures = {
@@ -16,14 +15,6 @@ const figures = {
 
 const text = (phrases: { text: string }[]) =>
   phrases.map((phrase) => phrase.text).join("");
-
-describe("shortKg", () => {
-  it("drops a needless decimal", () => {
-    expect(shortKg(195)).toBe("195 kg");
-    expect(shortKg(182.5)).toBe("182.5 kg");
-    expect(shortKg(1002.5)).toBe("1,002.5 kg");
-  });
-});
 
 describe("chanceInWords", () => {
   it("counts in tenths in the middle", () => {

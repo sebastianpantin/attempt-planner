@@ -7,11 +7,13 @@
   --line: #e5e7eb;
   --accent: #1d4ed8;
   --accent-soft: #e8eefc;
+  --accent-faint: #c7d2fe;
   --make: #166534;
   --make-soft: #e7f5ec;
   --miss: #b91c1c;
   --miss-soft: #fbeaea;
   --bold: #f59e0b;
+  --technical: #f59e0b;
   --warn: #b45309;
   --problem: var(--miss);
   --radius: 14px;
@@ -588,7 +590,7 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-.repeat {
+.shown-jump {
   position: absolute;
   inset: 0;
   display: none;
@@ -597,11 +599,11 @@ textarea {
   pointer-events: none;
 }
 
-.stepper[data-repeat]:not(:focus-within) .repeat {
+.stepper[data-shown]:not(:focus-within) .shown-jump {
   display: grid;
 }
 
-.stepper[data-repeat]:not(:focus-within) input {
+.stepper[data-shown]:not(:focus-within) input {
   color: transparent;
 }
 
@@ -1052,10 +1054,13 @@ caption {
   }
 
   #summary-bar p {
-    display: grid;
     flex: 1;
     margin: 0;
     font-size: 0.85rem;
+  }
+
+  #summary-bar-figures:not([hidden]) {
+    display: grid;
   }
 
   #summary-bar b {

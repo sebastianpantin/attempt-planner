@@ -16,7 +16,13 @@ import {
   delta,
   describeChange,
   histogram,
+  histogramLabel,
+  labelEvery,
   reachCurve,
+  reachLabel,
+  tallestBin,
+  totalCheck,
+  totalCheckRange,
   whatIfs,
 } from "./analytics-data.ts";
 
@@ -29,29 +35,40 @@ const totals = [
 ];
 
 describe("histogram", () => {
-  it("bins totals by 5 kg from the goal, with empty bins and bomb-outs apart", () => {
+  it("bins totals by 10 kg from the goal, with empty bins and bomb-outs apart", () => {
     const { bombOutShare, bins } = histogram(totals, 505);
     expect(bombOutShare).toBe(0.1);
     expect(bins.map((bin) => [bin.fromKg, bin.reachesGoal])).toEqual([
-      [500, false],
+      [495, false],
       [505, true],
-      [510, true],
       [515, true],
-      [520, true],
     ]);
     expect(bins.map((bin) => bin.share)).toEqual([
       expect.closeTo(0.3),
       0.3,
-      0,
-      0,
       0.3,
     ]);
   });
 
   it("marks no bin without a goal", () => {
     const { bins } = histogram(totals);
-    expect(bins.map((bin) => bin.fromKg)).toEqual([500, 505, 510, 515, 520]);
+    expect(bins.map((bin) => bin.fromKg)).toEqual([500, 510, 520]);
+    expect(bins.map((bin) => bin.share)).toEqual([expect.closeTo(0.6), 0, 0.3]);
     expect(bins.some((bin) => bin.reachesGoal)).toBe(false);
+  });
+
+  it("evens out totals that alternate between common and rare 2.5 kg steps", () => {
+    const alternating = Array.from({ length: 16 }, (_, index) => ({
+      totalKg: 500 + index * 2.5,
+      share: index % 2 === 0 ? 0.1 : 0.025,
+    }));
+    const { bins } = histogram(alternating, 500);
+    expect(bins.map((bin) => bin.share)).toEqual([
+      expect.closeTo(0.25),
+      expect.closeTo(0.25),
+      expect.closeTo(0.25),
+      expect.closeTo(0.25),
+    ]);
   });
 
   it("widens the bins over a wide range of totals", () => {
@@ -67,6 +84,33 @@ describe("histogram", () => {
       bombOutShare: 1,
       bins: [],
     });
+  });
+});
+
+describe("the histogram's labels", () => {
+  const { bins } = histogram(totals, 505);
+
+  it("finds the tallest bin, the first of equals", () => {
+    expect(tallestBin(bins)?.fromKg).toBe(495);
+    expect(tallestBin([])).toBeUndefined();
+  });
+
+  it("labels about nine bins at most", () => {
+    expect(labelEvery(0)).toBe(1);
+    expect(labelEvery(9)).toBe(1);
+    expect(labelEvery(10)).toBe(2);
+    expect(labelEvery(24)).toBe(3);
+  });
+
+  it("describes the totals, their likeliest bin and the goal", () => {
+    expect(
+      histogramLabel(histogram(totals, 505), { kg: 505, chance: 0.6 }),
+    ).toBe(
+      "Histogram of simulated totals. Bomb-out 10.0%. Totals from 495.0 kg to 525.0 kg, most often 495.0 kg to 505.0 kg. 60.0% at or above the goal of 505.0 kg.",
+    );
+    expect(histogramLabel({ bombOutShare: 1, bins: [] })).toBe(
+      "Histogram of simulated totals. Bomb-out 100.0%.",
+    );
   });
 });
 
@@ -108,6 +152,34 @@ const summary = (
   paths,
 });
 
+describe("checking any total", () => {
+  const points = reachCurve(totals);
+
+  it("reads the chance of reaching a total", () => {
+    expect(totalCheck(totals, 507.5)).toBe("507.5 kg: 60.0%");
+    expect(totalCheck(totals, 505)).toBe("505.0 kg: 60.0%");
+  });
+
+  it("runs over the totals that came up, starting on a 2.5 kg step within them", () => {
+    expect(totalCheckRange(points, 511)).toEqual({
+      min: 500,
+      max: 520,
+      value: 510,
+    });
+    expect(totalCheckRange(points, 600).value).toBe(520);
+    expect(totalCheckRange(points, 0).value).toBe(500);
+  });
+
+  it("describes the curve and the goal", () => {
+    expect(reachLabel(points, { kg: 505, chance: 0.6 })).toBe(
+      "Chance of reaching each total. 90.0% reach 500.0 kg, falling to 30.0% at 520.0 kg. 60.0% reach the goal of 505.0 kg.",
+    );
+    expect(reachLabel([])).toBe(
+      "Chance of reaching each total. Every simulated meet bombs out.",
+    );
+  });
+});
+
 describe("bomb-out risk", () => {
   it("splits each lift's risk by cause and names the riskiest lift", () => {
     const risk = bombOutRisk({
@@ -122,7 +194,30 @@ describe("bomb-out risk", () => {
       tooHeavy: expect.closeTo(0.015),
     });
     expect(risk.scaleMax).toBe(0.02);
-    expect(risk.hint).toBe("Bench carries 50.0% of the bomb-out risk.");
+    expect(risk.hint).toBe(
+      "Bench press carries 50.0% of the bomb-out risk. A lighter bench press opener is the cheapest fix.",
+    );
+  });
+
+  it("points to technique when most of the riskiest lift's risk is technical", () => {
+    const risk = bombOutRisk({
+      squat: summary(0.99, 0.008),
+      bench: summary(0.995, 0),
+      deadlift: summary(0.998, 0),
+    });
+    expect(risk.hint).toBe(
+      "Squat carries 58.8% of the bomb-out risk. Most of it is technical misses, so cleaner technique helps more than lighter weights.",
+    );
+  });
+
+  it("gives no advice when no lift carries most of the risk", () => {
+    const risk = bombOutRisk({
+      squat: summary(0.99, 0),
+      bench: summary(0.99, 0),
+      deadlift: summary(0.995, 0),
+    });
+    expect(risk.hint).toBe("Squat carries 40.0% of the bomb-out risk.");
+    expect(risk.scaleMax).toBe(0.01);
   });
 
   it("says so when no lift bombs out", () => {
@@ -193,14 +288,15 @@ const change = (
   setting: Change["setting"],
   weightKg: number,
   result: PlanOutcome,
-): Change => ({ lift, setting, weightKg, result });
+  improves = false,
+): Change => ({ lift, setting, weightKg, result, improves });
 
 describe("what-ifs", () => {
   it("describes a jump and an opener", () => {
     const current = outcome(0.7, 0.04);
     expect(
       describeChange(change("bench", "thirdAfterMake", 5, current), current),
-    ).toBe("Bench 3rd: +5.0 kg instead of +7.5 kg after a make");
+    ).toBe("Bench press 3rd: +5.0 kg instead of +7.5 kg after a make");
     expect(
       describeChange(change("deadlift", "opener", 215, current), current),
     ).toBe("Deadlift opener: 215.0 kg instead of 220.0 kg");
@@ -221,16 +317,16 @@ describe("what-ifs", () => {
     });
   });
 
-  it("takes the improving changes first, then the safest", () => {
+  it("takes the changes the engine ranks higher first, then the safest", () => {
     const current = outcome(0.7, 0.04);
     const picks = whatIfs(current, [
-      change("bench", "thirdAfterMake", 5, outcome(0.72, 0.04)),
+      change("bench", "thirdAfterMake", 5, outcome(0.72, 0.04), true),
       change("squat", "opener", 222.5, outcome(0.69, 0.05)),
       change("deadlift", "opener", 215, outcome(0.6, 0.031)),
       change("squat", "opener", 217.5, outcome(0.65, 0.035)),
     ]);
     expect(picks.map((pick) => pick.text)).toEqual([
-      "Bench 3rd: +5.0 kg instead of +7.5 kg after a make",
+      "Bench press 3rd: +5.0 kg instead of +7.5 kg after a make",
       "Deadlift opener: 215.0 kg instead of 220.0 kg",
       "Squat opener: 217.5 kg instead of 220.0 kg",
     ]);
@@ -241,16 +337,12 @@ describe("what-ifs", () => {
     });
   });
 
-  it("ranks a plan within the bomb-out cap above a likelier one over it", () => {
+  it("leaves out a change that neither ranks higher nor cuts the bomb-out chance", () => {
     const current = outcome(0.7, 0.05);
-    const picks = whatIfs(
-      current,
-      [
-        change("squat", "opener", 222.5, outcome(0.8, 0.06)),
-        change("squat", "opener", 217.5, outcome(0.6, 0.03)),
-      ],
-      0.04,
-    );
+    const picks = whatIfs(current, [
+      change("squat", "opener", 222.5, outcome(0.8, 0.06)),
+      change("squat", "opener", 217.5, outcome(0.6, 0.03), true),
+    ]);
     expect(picks.map((pick) => pick.text)).toEqual([
       "Squat opener: 217.5 kg instead of 220.0 kg",
     ]);
@@ -263,7 +355,13 @@ describe("what-ifs", () => {
       expectedTotalKg: 540,
     };
     const [pick] = whatIfs(current, [
-      change("squat", "opener", 222.5, { ...current, expectedTotalKg: 541 }),
+      change(
+        "squat",
+        "opener",
+        222.5,
+        { ...current, expectedTotalKg: 541 },
+        true,
+      ),
     ]);
     expect(pick!.goal).toBeUndefined();
     expect(pick!.plans).toBe(plans);

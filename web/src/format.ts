@@ -1,4 +1,4 @@
-import type { StandardErrors } from "../pkg/attempt_sim_wasm.js";
+import type { Lift, StandardErrors } from "../pkg/attempt_sim_wasm.js";
 import { PRECISE_SIMULATIONS } from "./inputs.ts";
 
 const oneDecimal = new Intl.NumberFormat("en", {
@@ -16,12 +16,36 @@ const percentFormat = (
   });
 const onePercentDecimal = percentFormat(1, 1);
 const upToTwoPercentDecimals = percentFormat(0, 2);
+const noPercentDecimals = percentFormat(0, 0);
+const upToOneDecimal = new Intl.NumberFormat("en", {
+  maximumFractionDigits: 1,
+});
 const conjunction = new Intl.ListFormat("en", { type: "conjunction" });
 
 /** The smallest chance one decimal can show. */
 const SMALLEST_SHOWN = 0.0005;
 
+/** Each lift's full name, and a short one for tight labels such as tabs. */
+export const LIFT_NAMES: Record<Lift, { full: string; short: string }> = {
+  squat: { full: "Squat", short: "Squat" },
+  bench: { full: "Bench press", short: "Bench" },
+  deadlift: { full: "Deadlift", short: "Deadlift" },
+};
+
 export const kg = (value: number) => `${oneDecimal.format(value)} kg`;
+
+/** A weight without a needless ".0": "182.5", "195". */
+export const weight = (kg: number) => upToOneDecimal.format(kg);
+export const shortKg = (kg: number) => `${weight(kg)} kg`;
+
+/** A jump with its sign, "+12.5"; with `zeroRepeats`, a jump of 0 reads "repeat". */
+export function jump(kg: number, zeroRepeats: boolean): string {
+  if (kg === 0 && zeroRepeats) return "repeat";
+  return kg > 0 ? `+${weight(kg)}` : weight(kg);
+}
+
+export const wholePercent = (probability: number) =>
+  noPercentDecimals.format(probability);
 
 /** One decimal, with a chance too small to show reading "under 0.1%" rather than 0.0%. */
 export const percent = (probability: number) =>
@@ -32,6 +56,15 @@ export const percent = (probability: number) =>
 /** Up to two decimals, for axis ticks like 0.5% and 1%. */
 export const finePercent = (probability: number) =>
   upToTwoPercentDecimals.format(probability);
+
+/** Round chances for scales and axes, from none to certain. */
+export const ROUND_CHANCES = [
+  0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1,
+];
+
+/** The first round chance at or above `chance`, ignoring rounding error. */
+export const roundChanceUp = (chance: number) =>
+  ROUND_CHANCES.find((round) => round >= chance - 1e-9) ?? 1;
 
 /** "a, b and c". */
 export const listOf = (items: string[]) => conjunction.format(items);

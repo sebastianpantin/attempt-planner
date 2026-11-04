@@ -1,13 +1,5 @@
 import type { Percentiles, StandardErrors } from "../pkg/attempt_sim_wasm.js";
-import { percent } from "./format.ts";
-
-const upToOneDecimal = new Intl.NumberFormat("en", {
-  maximumFractionDigits: 1,
-});
-
-/** A weight without a needless ".0": "182.5", "195". */
-export const weight = (kg: number) => upToOneDecimal.format(kg);
-export const shortKg = (kg: number) => `${weight(kg)} kg`;
+import { percent, shortKg, weight } from "./format.ts";
 
 /** The rarest chance put as a count of meets. */
 const RAREST = 1000;
@@ -29,8 +21,8 @@ export interface Phrase {
   strong?: boolean;
 }
 
-function goalPhrases(probability: number, goalKg: number): Phrase[] {
-  const goal = shortKg(goalKg);
+function goalPhrases({ kg, chance: probability }: KnownGoal): Phrase[] {
+  const goal = shortKg(kg);
   if (probability === 0)
     return [{ text: `No simulated meet reaches ${goal}.` }];
   if (probability === 1) {
@@ -53,19 +45,33 @@ function bombOutPhrases(probability: number): Phrase[] {
   ];
 }
 
+export interface KnownGoal {
+  kg: number;
+  chance: number;
+}
+
+/** The goal and its chance when both are known, which makes the goal the headline. */
+export const knownGoal = (
+  figures: StandardErrors,
+  goalKg?: number,
+): KnownGoal | undefined =>
+  figures.goalProbability === undefined || goalKg === undefined
+    ? undefined
+    : { kg: goalKg, chance: figures.goalProbability };
+
 /** The outcome in plain words, with the counts to stress marked strong. */
 export function outcomeSentence(
   figures: StandardErrors,
   goalKg?: number,
 ): Phrase[] {
-  const lead =
-    figures.goalProbability === undefined || goalKg === undefined
-      ? [
-          { text: "On average you total " },
-          { text: shortKg(figures.expectedTotalKg), strong: true },
-          { text: ", counting a bomb-out as 0." },
-        ]
-      : goalPhrases(figures.goalProbability, goalKg);
+  const goal = knownGoal(figures, goalKg);
+  const lead = goal
+    ? goalPhrases(goal)
+    : [
+        { text: "On average you total " },
+        { text: shortKg(figures.expectedTotalKg), strong: true },
+        { text: ", counting a bomb-out as 0." },
+      ];
   return [
     ...lead,
     { text: " " },
@@ -75,11 +81,12 @@ export function outcomeSentence(
 
 /** The ring: the goal chance with a goal, else the average total filled by the meets without a bomb-out. */
 export function ringFigure(figures: StandardErrors, goalKg?: number) {
-  if (figures.goalProbability !== undefined && goalKg !== undefined) {
+  const goal = knownGoal(figures, goalKg);
+  if (goal) {
     return {
-      value: percent(figures.goalProbability),
-      label: `reach ${shortKg(goalKg)}`,
-      share: figures.goalProbability,
+      value: percent(goal.chance),
+      label: `reach ${shortKg(goal.kg)}`,
+      share: goal.chance,
     };
   }
   return {
@@ -94,10 +101,10 @@ export function barFigures(
   figures: StandardErrors,
   goalKg?: number,
 ): [string, string][] {
-  const lead: [string, string] =
-    figures.goalProbability !== undefined && goalKg !== undefined
-      ? [percent(figures.goalProbability), `reach ${shortKg(goalKg)}`]
-      : [shortKg(figures.expectedTotalKg), "average"];
+  const goal = knownGoal(figures, goalKg);
+  const lead: [string, string] = goal
+    ? [percent(goal.chance), `reach ${shortKg(goal.kg)}`]
+    : [shortKg(figures.expectedTotalKg), "average"];
   return [lead, [percent(figures.bombOutProbability), "bomb-out"]];
 }
 

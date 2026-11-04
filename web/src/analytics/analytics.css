@@ -1,23 +1,12 @@
 .analytics {
-  --a-ink: var(--ink, #111827);
-  --a-muted: var(--muted, #6b7280);
-  --a-line: var(--line, #e5e7eb);
-  --a-surface: var(--card, #ffffff);
-  --a-soft: var(--bg, #f6f7f9);
-  --a-accent: var(--accent, #1d4ed8);
-  --a-accent-soft: var(--accent-soft, #e8eefc);
-  --a-short: var(--accent-faint, #c7d2fe);
-  --a-make: var(--make, #15803d);
-  --a-miss: var(--miss, #b91c1c);
-  --a-technical: var(--technical, #f59e0b);
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  color: var(--a-ink);
+  color: var(--ink);
 }
 
 .analytics .panel {
-  border: 1px solid var(--a-line);
+  border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px;
   display: grid;
@@ -38,7 +27,7 @@
 .analytics .sub {
   margin: 0;
   font-size: 0.8rem;
-  color: var(--a-muted);
+  color: var(--muted);
 }
 
 .analytics svg {
@@ -49,47 +38,77 @@
 }
 
 .analytics .bar.reach {
-  fill: var(--a-accent);
+  fill: var(--accent);
 }
 
 .analytics .bar.short {
-  fill: var(--a-short);
+  fill: var(--accent-faint);
 }
 
 .analytics .bar.bomb {
-  fill: var(--a-miss);
+  fill: var(--miss);
 }
 
 .analytics .tick-label,
 .analytics .axis text {
   font-size: 10px;
-  fill: var(--a-muted);
+  fill: var(--muted);
 }
 
 .analytics .axis .domain {
-  stroke: var(--a-line);
+  stroke: var(--line);
 }
 
 .analytics .note-label {
   font-size: 11px;
-  fill: var(--a-ink);
+  fill: var(--ink);
 }
 
 .analytics .goal-line {
-  stroke: var(--a-ink);
+  stroke: var(--ink);
   stroke-dasharray: 4 3;
 }
 
 .analytics .reach-line {
   fill: none;
-  stroke: var(--a-accent);
+  stroke: var(--accent);
   stroke-width: 2.5;
 }
 
-.analytics .goal-dot {
-  fill: var(--a-surface);
-  stroke: var(--a-accent);
+.analytics .check-marker line {
+  stroke: var(--accent);
+}
+
+.analytics .check-marker circle {
+  fill: var(--card);
+  stroke: var(--accent);
   stroke-width: 2.5;
+}
+
+.analytics svg.reach {
+  cursor: ew-resize;
+  touch-action: pan-y;
+}
+
+.analytics .total-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.analytics .total-check input::-webkit-slider-runnable-track {
+  background: var(--accent-soft);
+}
+
+.analytics .total-check input::-moz-range-track {
+  background: var(--accent-soft);
+}
+
+.analytics .check-readout {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .analytics .legend {
@@ -97,7 +116,7 @@
   flex-wrap: wrap;
   gap: 4px 14px;
   font-size: 0.78rem;
-  color: var(--a-muted);
+  color: var(--muted);
 }
 
 .analytics .swatch {
@@ -110,22 +129,22 @@
 }
 
 .analytics .swatch.reach {
-  background: var(--a-accent);
+  background: var(--accent);
 }
 
 .analytics .swatch.short {
-  background: var(--a-short);
+  background: var(--accent-faint);
 }
 
 .analytics .swatch.bomb,
 .analytics .swatch.heavy,
 .analytics .hbar .heavy {
-  background: var(--a-miss);
+  background: var(--miss);
 }
 
 .analytics .swatch.technical,
 .analytics .hbar .technical {
-  background: var(--a-technical);
+  background: var(--technical);
 }
 
 .analytics .hbar {
@@ -138,7 +157,7 @@
 
 .analytics .hbar .track {
   height: 12px;
-  background: var(--a-soft);
+  background: var(--bg);
   border-radius: 6px;
   overflow: hidden;
   display: flex;
@@ -156,9 +175,9 @@
 }
 
 .analytics .tabs button {
-  border: 1px solid var(--a-line);
-  background: var(--a-surface);
-  color: var(--a-ink);
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
   border-radius: 999px;
   min-height: 36px;
   padding: 6px 14px;
@@ -168,9 +187,9 @@
 }
 
 .analytics .tabs button[aria-pressed="true"] {
-  background: var(--a-ink);
-  color: var(--a-surface);
-  border-color: var(--a-ink);
+  background: var(--ink);
+  color: var(--card);
+  border-color: var(--ink);
 }
 
 .analytics .attempt-body {
@@ -186,7 +205,7 @@
 }
 
 .analytics .attempt-rates div {
-  background: var(--a-soft);
+  background: var(--bg);
   border-radius: 10px;
   padding: 8px;
 }
@@ -198,7 +217,7 @@
 
 .analytics .attempt-rates span {
   font-size: 0.75rem;
-  color: var(--a-muted);
+  color: var(--muted);
 }
 
 .analytics table.paths {
@@ -209,7 +228,7 @@
 
 .analytics table.paths td {
   padding: 5px 0;
-  border-bottom: 1px solid var(--a-line);
+  border-bottom: 1px solid var(--line);
 }
 
 .analytics table.paths td:last-child {
@@ -223,11 +242,11 @@
 }
 
 .analytics .marks .y {
-  color: var(--a-make);
+  color: var(--make);
 }
 
 .analytics .marks .n {
-  color: var(--a-miss);
+  color: var(--miss);
 }
 
 .analytics .whatif {
@@ -246,7 +265,7 @@
   font-size: 0.88rem;
   padding: 8px 10px;
   border-radius: 10px;
-  background: var(--a-soft);
+  background: var(--bg);
 }
 
 .analytics .whatif .change {
@@ -259,17 +278,17 @@
 }
 
 .analytics .delta.better {
-  color: var(--a-make);
+  color: var(--make);
 }
 
 .analytics .delta.worse {
-  color: var(--a-miss);
+  color: var(--miss);
 }
 
 .analytics .whatif button {
   border: 0;
-  background: var(--a-accent-soft);
-  color: var(--a-accent);
+  background: var(--accent-soft);
+  color: var(--accent);
   border-radius: 8px;
   min-height: 36px;
   padding: 6px 12px;

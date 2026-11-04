@@ -1,5 +1,5 @@
 import type { PlanShape, TradeoffPoint } from "../pkg/attempt_sim_wasm.js";
-import { finePercent } from "./format.ts";
+import { finePercent, ROUND_CHANCES, roundChanceUp } from "./format.ts";
 
 export const shapeLabel = (shape: PlanShape) =>
   `${shape.openerPercent}% / ${shape.secondPercent}% / ${shape.thirdPercent}%`;
@@ -46,10 +46,6 @@ export function noGoalPickNote(
   return `No plan in the family keeps the bomb-out chance within ${finePercent(bombOutCap)}, so none is marked best for the goal. Raise the highest bomb-out chance to see one.`;
 }
 
-const RISK_TICKS = [
-  0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1,
-];
-
 /** The smallest gap between risk ticks, as a share of the axis length. */
 const MIN_TICK_GAP = 0.08;
 
@@ -59,10 +55,10 @@ const MIN_TICK_GAP = 0.08;
  * sit closer than `MIN_TICK_GAP`.
  */
 export function riskAxis(maxRisk: number): { max: number; ticks: number[] } {
-  const max = RISK_TICKS.find((tick) => tick >= Math.max(maxRisk, 0.01)) ?? 1;
+  const max = roundChanceUp(Math.max(maxRisk, 0.01));
   const position = (tick: number) => Math.sqrt(tick / max);
   const kept = [0];
-  for (const tick of RISK_TICKS.filter(
+  for (const tick of ROUND_CHANCES.filter(
     (tick) => tick > 0 && tick <= max,
   ).reverse()) {
     if (
