@@ -179,6 +179,10 @@ fn lists_single_changes_with_camel_case_fields() {
     assert!(json.contains(r#""setting":""#), "{json}");
     assert!(json.contains(r#""weightKg":"#), "{json}");
     assert!(json.contains(r#""improves":"#), "{json}");
+    assert!(
+        !json.contains(r#""setting":"secondAfterMiss""#),
+        "every second attempt is made, so a jump after a miss changes nothing: {json}"
+    );
 }
 
 #[wasm_bindgen_test]

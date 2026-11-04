@@ -307,7 +307,8 @@ pub struct Change {
 pub enum ChangesResponse {
     Changed {
         current: PlanOutcome,
-        /// Ranked as the search ranks plans, best first.
+        /// Ranked as the search ranks plans, best first, leaving out changes that do not
+        /// move the outcome.
         changes: Vec<Change>,
     },
     Invalid {
@@ -696,19 +697,23 @@ mod tests {
             panic!("expected changes");
         };
         assert_eq!(current.plans, request.plans);
-        let first = changes[0];
-        let setting_kg = |plans: &PerLift<LiftPlanKg>| {
-            let plan = plans.get(first.lift);
-            match first.setting {
-                Setting::Opener => plan.opener_kg,
-                Setting::SecondAfterMake => plan.second.after_make_kg,
-                Setting::SecondAfterMiss => plan.second.after_miss_kg,
-                Setting::ThirdAfterMake => plan.third.after_make_kg,
-                Setting::ThirdAfterMiss => plan.third.after_miss_kg,
-            }
-        };
-        assert_eq!(setting_kg(&first.result.plans), first.weight_kg);
-        assert_eq!((setting_kg(&request.plans) - first.weight_kg).abs(), 2.5);
+        let mut moves_kg = Vec::new();
+        for change in &changes {
+            let setting_kg = |plans: &PerLift<LiftPlanKg>| {
+                let plan = plans.get(change.lift);
+                match change.setting {
+                    Setting::Opener => plan.opener_kg,
+                    Setting::SecondAfterMake => plan.second.after_make_kg,
+                    Setting::SecondAfterMiss => plan.second.after_miss_kg,
+                    Setting::ThirdAfterMake => plan.third.after_make_kg,
+                    Setting::ThirdAfterMiss => plan.third.after_miss_kg,
+                }
+            };
+            assert_eq!(setting_kg(&change.result.plans), change.weight_kg);
+            moves_kg.push((setting_kg(&request.plans) - change.weight_kg).abs());
+        }
+        assert!(moves_kg.contains(&2.5) && moves_kg.contains(&5.0));
+        assert!(moves_kg.iter().all(|kg| [2.5, 5.0].contains(kg)));
         let improving = changes.iter().take_while(|change| change.improves).count();
         assert!(changes[improving..].iter().all(|change| !change.improves));
     }
