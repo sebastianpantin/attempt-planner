@@ -1,10 +1,12 @@
 import type {
+  ChangesResponse,
   EvaluateRequest,
   Evaluation,
   Lift,
   MaxEstimate,
   Percentiles,
   Problem,
+  SearchRequest,
   TradeoffPoint,
   TradeoffRequest,
   TradeoffResponse,
@@ -54,6 +56,7 @@ import {
   ladder,
   problemListId,
 } from "./plan-view.ts";
+import { renderAnalytics } from "./analytics/analytics.ts";
 import { startSearch } from "./search-runner.ts";
 import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
@@ -348,6 +351,29 @@ const status = (id: string, text: string) => {
 };
 
 let shownEvaluation: Evaluation | undefined;
+let evaluatedGoalKg: number | undefined;
+/** Single changes to the plans shown, cleared while newer plans are being simulated. */
+let shownChanges:
+  | {
+      reply: Extract<ChangesResponse, { kind: "changed" }>;
+      request: SearchRequest;
+    }
+  | undefined;
+
+function showAnalytics() {
+  const section = byId("analytics");
+  section.hidden = !shownEvaluation;
+  if (!shownEvaluation) return;
+  renderAnalytics(byId("analytics-panels"), {
+    evaluation: shownEvaluation,
+    goalKg: evaluatedGoalKg,
+    ...(shownChanges && {
+      changes: shownChanges.reply,
+      bombOutCap: shownChanges.request.bombOutCap,
+    }),
+    onApply: usePlans,
+  });
+}
 let resultsInView = false;
 /** The summary bar stands in for the results while they are out of sight. */
 const updateSummaryBar = () => {
@@ -449,7 +475,9 @@ const submitEvaluation = simulationWorker("evaluate", {
     problems.evaluation = reply.kind === "invalid" ? reply.problems : [];
     showProblems();
     shownEvaluation = reply.kind === "evaluated" ? reply.evaluation : undefined;
+    evaluatedGoalKg = request.goalKg;
     showEvaluation(shownEvaluation, request);
+    showAnalytics();
     showTradeoff();
     report(
       "status",
@@ -484,9 +512,19 @@ const submitTradeoff = simulationWorker("tradeoff", {
   },
 });
 
+const submitChanges = simulationWorker("changes", {
+  started: () => {},
+  finished(reply, request) {
+    shownChanges = reply.kind === "changed" ? { reply, request } : undefined;
+    showAnalytics();
+  },
+});
+
 let sweptKey = "";
 function simulate(values: FormValues) {
   submitEvaluation(buildRequest(values, input("precise").checked));
+  shownChanges = undefined;
+  submitChanges(buildSearchRequest(values));
   const sweep = buildTradeoffRequest(values);
   const key = JSON.stringify(sweep);
   if (key !== sweptKey) {
