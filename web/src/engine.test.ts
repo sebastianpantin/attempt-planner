@@ -2,9 +2,13 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, it } from "vitest";
 import { initSync } from "../pkg/attempt_sim_wasm.js";
-import { answer, failed } from "./engine.ts";
+import { answer, failed, search } from "./engine.ts";
 import { EXAMPLE } from "./example.ts";
-import { buildRequest, buildTradeoffRequest } from "./inputs.ts";
+import {
+  buildRequest,
+  buildSearchRequest,
+  buildTradeoffRequest,
+} from "./inputs.ts";
 
 beforeAll(() => {
   const wasm = new URL("../pkg/attempt_sim_wasm_bg.wasm", import.meta.url);
@@ -63,4 +67,29 @@ it("keeps the message of whatever went wrong", () => {
     message: "no wasm",
   });
   expect(failed("no wasm")).toEqual({ kind: "failed", message: "no wasm" });
+});
+
+it("searches step by step until done", () => {
+  const replies = [...search(buildSearchRequest(EXAMPLE))];
+  const last = replies.at(-1);
+  if (last?.kind !== "progress") throw new Error(JSON.stringify(last));
+  expect(last.progress.done).toBe(true);
+  expect(
+    replies
+      .slice(0, -1)
+      .every((r) => r.kind === "progress" && !r.progress.done),
+  ).toBe(true);
+  expect(last.progress.bombOutProbability).toBeLessThanOrEqual(0.05);
+});
+
+it("fails a search whose input has a problem", () => {
+  const replies = [
+    ...search({ ...buildSearchRequest(EXAMPLE), bombOutCap: 3 }),
+  ];
+  expect(replies).toEqual([
+    {
+      kind: "failed",
+      message: "bomb-out cap must be a chance between 0 and 1",
+    },
+  ]);
 });

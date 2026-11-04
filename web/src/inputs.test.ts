@@ -3,6 +3,7 @@ import type { Problem } from "../pkg/attempt_sim_wasm.js";
 import { EXAMPLE } from "./example.ts";
 import {
   buildRequest,
+  buildSearchRequest,
   buildTradeoffRequest,
   planValues,
   describeProblem,
@@ -112,7 +113,7 @@ describe("describeProblem", () => {
 });
 
 it("lists every number input once", () => {
-  expect(INPUT_NAMES).toHaveLength(3 * 8 + 3);
+  expect(INPUT_NAMES).toHaveLength(3 * 8 + 4);
   expect(new Set(INPUT_NAMES).size).toBe(INPUT_NAMES.length);
   expect(Object.keys(EXAMPLE).sort()).toEqual([...INPUT_NAMES].sort());
 });
@@ -139,5 +140,25 @@ describe("planValues", () => {
     const values = { ...EXAMPLE, ...Object.fromEntries(planValues(plans)) };
     expect(buildRequest(values, false).plans).toEqual(plans);
     expect(values["deadlift-openerKg"]).toBe(210);
+  });
+});
+
+describe("buildSearchRequest", () => {
+  it("takes the lifter, plans and goal, with the cap in percent", () => {
+    const evaluate = buildRequest(EXAMPLE, false);
+    expect(buildSearchRequest({ ...EXAMPLE, bombOutCapPercent: 2.5 })).toEqual({
+      lifter: evaluate.lifter,
+      plans: evaluate.plans,
+      goalKg: evaluate.goalKg,
+      bombOutCap: 0.025,
+      simulations: QUICK_SIMULATIONS,
+      seed: evaluate.seed,
+    });
+  });
+
+  it("leaves the cap out when it is empty", () => {
+    expect(
+      buildSearchRequest({ ...EXAMPLE, bombOutCapPercent: NaN }),
+    ).not.toHaveProperty("bombOutCap");
   });
 });

@@ -32,4 +32,5 @@ export const EXAMPLE: FormValues = {
   goalKg: 550,
   spreadPercent: 3,
   correlation: 0.5,
+  bombOutCapPercent: 5,
 };

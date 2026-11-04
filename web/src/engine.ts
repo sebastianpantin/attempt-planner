@@ -1,4 +1,7 @@
 import {
+  PlanSearch,
+  type SearchProgress,
+  type SearchRequest,
   evaluate,
   type EvaluateRequest,
   type EvaluateResponse,
@@ -17,21 +20,50 @@ export interface Jobs {
 
 export type Reply<K extends keyof Jobs> = Jobs[K]["response"] | Failed;
 
-export type Job = {
-  [K in keyof Jobs]: { kind: K; request: Jobs[K]["request"] };
-}[keyof Jobs];
+export type Job =
+  | {
+      [K in keyof Jobs]: { kind: K; request: Jobs[K]["request"] };
+    }[keyof Jobs]
+  | { kind: "search"; request: SearchRequest };
+
+export type SearchReply =
+  { kind: "progress"; progress: SearchProgress } | Failed;
 
 export const failed = (error: unknown): Failed => ({
   kind: "failed",
   message: error instanceof Error ? error.message : String(error),
 });
 
-export function answer(job: Job): Reply<keyof Jobs> {
+export function answer(
+  job: Extract<Job, { kind: keyof Jobs }>,
+): Reply<keyof Jobs> {
   try {
     return job.kind === "evaluate"
       ? evaluate(job.request)
       : tradeoff(job.request);
   } catch (error) {
     return failed(error);
+  }
+}
+
+/** Runs a search one step at a time, yielding its progress after every step. */
+export function* search(request: SearchRequest): Generator<SearchReply> {
+  let planSearch: PlanSearch;
+  try {
+    planSearch = new PlanSearch(request);
+  } catch (error) {
+    yield failed(error);
+    return;
+  }
+  try {
+    for (;;) {
+      const progress = planSearch.step();
+      yield { kind: "progress", progress };
+      if (progress.done) return;
+    }
+  } catch (error) {
+    yield failed(error);
+  } finally {
+    planSearch.free();
   }
 }

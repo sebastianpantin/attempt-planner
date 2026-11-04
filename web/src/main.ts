@@ -13,6 +13,7 @@ import { EXAMPLE } from "./example.ts";
 import * as format from "./format.ts";
 import {
   buildRequest,
+  buildSearchRequest,
   buildTradeoffRequest,
   describeProblem,
   type FormValues,
@@ -24,6 +25,8 @@ import {
   LIFTS,
   planValues,
 } from "./inputs.ts";
+import { startSearch } from "./search-runner.ts";
+import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
 import { highlightedPoints, shapeLabel } from "./tradeoff-view.ts";
 
@@ -233,8 +236,8 @@ const status = (id: string, text: string) => {
 let shownEvaluation: Evaluation | undefined;
 let shownTradeoff: Extract<TradeoffResponse, { kind: "swept" }> | undefined;
 
-function usePlan(point: TradeoffPoint) {
-  for (const [name, kg] of planValues(point.plans)) {
+function usePlans(plans: TradeoffPoint["plans"]) {
+  for (const [name, kg] of planValues(plans)) {
     input(name).valueAsNumber = kg;
   }
   update();
@@ -255,7 +258,7 @@ function showTradeoff() {
         expectedTotalKg: shownEvaluation.expectedTotalKg,
       },
     },
-    usePlan,
+    (point) => usePlans(point.plans),
   );
   byId("tradeoff-legend").hidden = bestForGoal === undefined;
   byId("tradeoff-plans").replaceChildren(
@@ -278,7 +281,7 @@ function showTradeoff() {
       use.type = "button";
       use.textContent = "Use";
       use.setAttribute("aria-label", `Use ${describePoint(point)}`);
-      use.addEventListener("click", () => usePlan(point));
+      use.addEventListener("click", () => usePlans(point.plans));
       row.insertCell().append(use);
       return row;
     }),
@@ -361,7 +364,48 @@ function update() {
   typingPause = setTimeout(() => simulate(values), TYPING_PAUSE_MS);
 }
 
-form.addEventListener("input", update);
+const findButton = byId("find-plan") as HTMLButtonElement;
+const cancelButton = byId("cancel-search") as HTMLButtonElement;
+let stopSearch: (() => void) | undefined;
+
+function searchEnded(message: string) {
+  stopSearch = undefined;
+  findButton.disabled = false;
+  if (document.activeElement === cancelButton) findButton.focus();
+  cancelButton.hidden = true;
+  status("search-status", message);
+}
+
+findButton.addEventListener("click", () => {
+  findButton.disabled = true;
+  cancelButton.hidden = false;
+  cancelButton.focus();
+  status("search-status", "Searching…");
+  stopSearch = startSearch(buildSearchRequest(readValues()), {
+    progress(progress) {
+      if (!progress.done) {
+        status("search-status", describeSearch(progress));
+        return;
+      }
+      usePlans(progress.plans);
+      searchEnded(describeSearch(progress));
+    },
+    failed: (message) => searchEnded(`The search failed: ${message}`),
+  });
+});
+
+cancelButton.addEventListener("click", () => {
+  stopSearch?.();
+  searchEnded("Search cancelled. The plan is unchanged.");
+});
+
+form.addEventListener("input", () => {
+  if (stopSearch) {
+    stopSearch();
+    searchEnded("Search cancelled because the inputs changed.");
+  }
+  update();
+});
 form.addEventListener("submit", (event) => event.preventDefault());
 
 const initial = readValues();

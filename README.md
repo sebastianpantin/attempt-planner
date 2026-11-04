@@ -2,7 +2,7 @@
 
 A Monte Carlo simulator for choosing openers and attempt jumps at a powerlifting meet. The core is Rust, compiled to WebAssembly so it runs in the browser.
 
-Early stage. The page evaluates one attempt plan and charts the tradeoff between bomb-out risk and expected total across a family of plans. A plan search comes next.
+Early stage. The page evaluates an attempt plan, charts the tradeoff between bomb-out risk and average total across a family of plans, and searches for the plan with the best chance of reaching a goal, optionally under a bomb-out cap. The default make-rate curve is still a placeholder.
 
 ## The model
 
