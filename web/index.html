@@ -103,7 +103,7 @@
             </fieldset>
           </details>
 
-          <details>
+          <details id="past-meets-panel">
             <summary>Estimate maxes from past meets</summary>
             <p class="hint">
               Estimates your expected maxes from the attempts you took. Paste
@@ -133,24 +133,24 @@
           </details>
 
           <div id="lifts"></div>
+        </form>
 
-          <fieldset>
-            <legend><h3>Find the best plan</h3></legend>
+        <div class="side">
+          <section id="search" aria-labelledby="search-heading">
+            <h2 id="search-heading">Find the best plan</h2>
             <p class="hint">
               Searches for the openers and jumps with the best chance of
               reaching the goal, or the highest average total without a goal,
               keeping under the highest bomb-out chance set for the meet, and
-              fills them in above.
+              fills them in.
             </p>
             <div class="actions">
               <button type="button" id="find-plan">Find best plan</button>
               <button type="button" id="cancel-search" hidden>Cancel</button>
             </div>
             <p id="search-status" role="status"></p>
-          </fieldset>
-        </form>
+          </section>
 
-        <div class="side">
           <section id="results" aria-labelledby="results-heading">
             <h2 id="results-heading">Results</h2>
             <p id="status" role="status"></p>

@@ -56,7 +56,6 @@ const LIFT_NAMES: Record<Lift, string> = {
   bench: "Bench press",
   deadlift: "Deadlift",
 };
-const ORDINALS = ["1st", "2nd", "3rd"];
 const HEADLINE_LABELS: Record<format.Headline, string> = {
   total: "Average total, counting a bomb-out as 0",
   goal: "Chance of reaching the goal",
@@ -82,6 +81,7 @@ function liftFieldset(lift: Lift): string {
       <label>Expected max (kg)
         <input name="${inputName(lift, "expectedMaxKg")}" type="number" min="20" step="2.5" />
       </label>
+      ${lift === LIFTS[0] ? '<button type="button" class="link" id="open-past-meets">Estimate maxes from past meets</button>' : ""}
       <label>Opener (kg)
         <input name="${inputName(lift, "openerKg")}" type="number" min="20" step="2.5" />
       </label>
@@ -146,29 +146,54 @@ const OUTCOMES = {
   afterMake: { mark: "✓ ", text: "after a make: " },
   afterMiss: { mark: "✗ ", text: "after a miss: " },
 } as const;
+const BRANCHES = ["afterMake", "afterMiss"] as const;
 
-function treeItem(
+function span(text: string, seenOnly: boolean): HTMLSpanElement {
+  const element = document.createElement("span");
+  element.textContent = text;
+  if (seenOnly) element.ariaHidden = "true";
+  else element.className = "visually-hidden";
+  return element;
+}
+
+/** The ✓ or ✗ on screen, read out as words. */
+const outcomeLabel = (outcome: keyof typeof OUTCOMES) => [
+  span(OUTCOMES[outcome].mark, true),
+  span(OUTCOMES[outcome].text, false),
+];
+
+/** One line per 2nd attempt, with both of its 3rd attempts: "✓ 2nd 195.0 kg → ✓ 202.5 kg / ✗ 195.0 kg". */
+function secondAttemptItem(
   node: AttemptNode,
-  attempt = 0,
-  outcome?: keyof typeof OUTCOMES,
+  outcome: keyof typeof OUTCOMES,
 ): HTMLLIElement {
-  const item = listItem(`${ORDINALS[attempt]} ${format.kg(node.weightKg)}`);
-  if (outcome) {
-    const mark = document.createElement("span");
-    mark.ariaHidden = "true";
-    mark.textContent = OUTCOMES[outcome].mark;
-    const text = document.createElement("span");
-    text.className = "visually-hidden";
-    text.textContent = OUTCOMES[outcome].text;
-    item.prepend(mark, text);
-  }
-  const children = (["afterMake", "afterMiss"] as const).flatMap((branch) => {
-    const child = node[branch];
-    return child ? [treeItem(child, attempt + 1, branch)] : [];
+  const item = document.createElement("li");
+  item.append(...outcomeLabel(outcome), `2nd ${format.kg(node.weightKg)}`);
+  const thirds = BRANCHES.flatMap((branch) => {
+    const third = node[branch];
+    return third ? [[branch, third] as const] : [];
   });
-  if (children.length > 0) {
+  for (const [index, [branch, third]] of thirds.entries()) {
+    const first = index === 0;
+    item.append(
+      span(first ? " → " : " / ", true),
+      span(first ? ", then 3rd " : " or ", false),
+      ...outcomeLabel(branch),
+      format.kg(third.weightKg),
+    );
+  }
+  return item;
+}
+
+function treeItem(node: AttemptNode): HTMLLIElement {
+  const item = listItem(`1st ${format.kg(node.weightKg)}`);
+  const seconds = BRANCHES.flatMap((branch) => {
+    const second = node[branch];
+    return second ? [secondAttemptItem(second, branch)] : [];
+  });
+  if (seconds.length > 0) {
     const list = document.createElement("ul");
-    list.append(...children);
+    list.append(...seconds);
     item.append(list);
   }
   return item;
@@ -212,7 +237,7 @@ function showEvaluation(
   simulations: number,
 ) {
   byId("evaluation").hidden = !evaluation;
-  summaryBar.hidden = !evaluation;
+  updateSummaryBar();
   if (!evaluation) return;
   byId("summary-bar-figures").replaceChildren(
     ...resultsSummary(evaluation).map((figure) => {
@@ -281,6 +306,15 @@ const status = (id: string, text: string) => {
 };
 
 let shownEvaluation: Evaluation | undefined;
+let resultsInView = false;
+/** The summary bar stands in for the results while they are out of sight. */
+const updateSummaryBar = () => {
+  summaryBar.hidden = !shownEvaluation || resultsInView;
+};
+new IntersectionObserver(([entry]) => {
+  resultsInView = entry?.isIntersecting ?? false;
+  updateSummaryBar();
+}).observe(byId("results"));
 /** Problems from the evaluation, and those only the sweep reports. */
 const problems: { evaluation: Problem[]; sweep: Problem[] } = {
   evaluation: [],
@@ -470,6 +504,10 @@ const sex = () => sexSelect.value as Sex;
 let calibratedSex: Sex = "any";
 
 const pastMeets = byId("past-meets") as HTMLTextAreaElement;
+byId("open-past-meets").addEventListener("click", () => {
+  (byId("past-meets-panel") as HTMLDetailsElement).open = true;
+  pastMeets.focus();
+});
 const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
 const useEstimateButton = byId("use-estimate") as HTMLButtonElement;
 let estimatedValues: [InputName, number][] = [];
