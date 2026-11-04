@@ -1,4 +1,4 @@
-import type { LiftPlanInput } from "../pkg/attempt_sim_wasm.js";
+import type { LiftPlanKg } from "../pkg/attempt_sim_wasm.js";
 
 export interface AttemptNode {
   weightKg: number;
@@ -7,7 +7,7 @@ export interface AttemptNode {
 }
 
 /** Every attempt the plan can lead to, or `undefined` while a weight is missing. */
-export function attemptTree(plan: LiftPlanInput): AttemptNode | undefined {
+export function attemptTree(plan: LiftPlanKg): AttemptNode | undefined {
   const { second, third } = plan;
   const weights = [plan.openerKg, second.afterMakeKg, second.afterMissKg];
   if (

@@ -1,8 +1,7 @@
-use crate::model::MakeRateCurve;
 use crate::rules::{ATTEMPTS_PER_LIFT, Attempt, BAR, HEAVIEST, RuleViolation, Weight};
 
 /// How far to jump for one attempt, depending on whether the previous attempt was made.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Jumps {
     pub after_make: Weight,
     pub after_miss: Weight,
@@ -17,7 +16,7 @@ pub enum PlanStep {
 }
 
 /// The plan for one lift: an opener, then jump rules for the 2nd and 3rd attempts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LiftPlan {
     pub opener: Weight,
     pub second: Jumps,
@@ -60,19 +59,17 @@ impl LiftPlan {
         problems
     }
 
-    /// The attempts taken on a day with this day max. An attempt is made when its roll
-    /// falls below the make probability.
+    /// The attempts taken on one meet day. Each attempt is made when its weight is below
+    /// that attempt's make threshold (see `MakeRateCurve::make_threshold_kg`).
     pub fn attempts(
         &self,
-        curve: &MakeRateCurve,
-        day_max_kg: f64,
-        rolls: [f64; ATTEMPTS_PER_LIFT],
+        make_thresholds_kg: [f64; ATTEMPTS_PER_LIFT],
     ) -> [Attempt; ATTEMPTS_PER_LIFT] {
-        let take = |weight, roll| Attempt {
+        let take = |weight: Weight, threshold_kg| Attempt {
             weight,
-            made: roll < curve.make_probability(weight, day_max_kg),
+            made: weight.kg() < threshold_kg,
         };
-        let mut attempts = [take(self.opener, rolls[0]); ATTEMPTS_PER_LIFT];
+        let mut attempts = [take(self.opener, make_thresholds_kg[0]); ATTEMPTS_PER_LIFT];
         for (index, (_, _, jumps)) in (1..).zip(self.later_attempts()) {
             let previous = attempts[index - 1];
             let jump = if previous.made {
@@ -80,7 +77,7 @@ impl LiftPlan {
             } else {
                 jumps.after_miss
             };
-            attempts[index] = take(previous.weight + jump, rolls[index]);
+            attempts[index] = take(previous.weight + jump, make_thresholds_kg[index]);
         }
         attempts
     }
@@ -89,7 +86,12 @@ impl LiftPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::MakeRateCurve;
     use crate::testing::{kg, made, missed};
+
+    fn thresholds(curve: &MakeRateCurve, day_max_kg: f64, rolls: [f64; 3]) -> [f64; 3] {
+        rolls.map(|roll| curve.make_threshold_kg(day_max_kg, roll))
+    }
 
     fn plan() -> LiftPlan {
         LiftPlan {
@@ -117,9 +119,9 @@ mod tests {
 
     #[test]
     fn jumps_follow_each_outcome() {
-        let all_made = plan().attempts(&SHARP, 250.0, [0.5; 3]);
+        let all_made = plan().attempts(thresholds(&SHARP, 250.0, [0.5; 3]));
         assert_eq!(all_made, [made(180.0), made(190.0), made(197.5)]);
-        let all_missed = plan().attempts(&SHARP, 150.0, [0.5; 3]);
+        let all_missed = plan().attempts(thresholds(&SHARP, 150.0, [0.5; 3]));
         assert_eq!(all_missed, [missed(180.0), missed(180.0), missed(182.5)]);
     }
 
@@ -129,7 +131,7 @@ mod tests {
             ratio_at_half: 1.0,
             steepness: 20.0,
         };
-        let attempts = plan().attempts(&curve, 180.0, [0.4, 0.6, 0.0]);
+        let attempts = plan().attempts(thresholds(&curve, 180.0, [0.4, 0.6, 0.0]));
         assert_eq!(attempts, [made(180.0), missed(190.0), made(192.5)]);
     }
 

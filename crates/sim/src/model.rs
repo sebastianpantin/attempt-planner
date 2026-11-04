@@ -20,6 +20,13 @@ impl MakeRateCurve {
         1.0 / (1.0 + (self.steepness * (ratio - self.ratio_at_half)).exp())
     }
 
+    /// The load below which an attempt with this roll is made. Comparing the load with it
+    /// gives the same answer as `roll < make_probability(load, day_max_kg)`, with the
+    /// logarithm paid once per roll instead of an exponential per load.
+    pub fn make_threshold_kg(&self, day_max_kg: f64, roll: f64) -> f64 {
+        day_max_kg * (self.ratio_at_half + (1.0 / roll - 1.0).ln() / self.steepness)
+    }
+
     pub fn is_valid(&self) -> bool {
         let positive = |x: f64| x.is_finite() && x > 0.0;
         positive(self.ratio_at_half) && positive(self.steepness)
@@ -82,6 +89,28 @@ mod tests {
     fn matches_the_logistic_formula() {
         let expected = 1.0 / (1.0 + (20.0_f64 * (0.95 - 1.0)).exp());
         assert!((CURVE.make_probability(kg(190.0), 200.0) - expected).abs() < 1e-12);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn make_threshold_agrees_with_the_make_probability(
+            load in 20_000u32..400_000,
+            day_max_kg in 20.0..400.0f64,
+            roll in 0.0..1.0f64,
+        ) {
+            let load = Weight::from_grams(load / 2_500 * 2_500);
+            let probability = CURVE.make_probability(load, day_max_kg);
+            proptest::prop_assume!((roll - probability).abs() > 1e-9);
+            proptest::prop_assert_eq!(
+                roll < probability,
+                load.kg() < CURVE.make_threshold_kg(day_max_kg, roll)
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_roll_makes_any_load() {
+        assert_eq!(CURVE.make_threshold_kg(200.0, 0.0), f64::INFINITY);
     }
 
     #[test]

@@ -2,8 +2,10 @@ import type {
   EvaluateRequest,
   InputField,
   Lift,
+  LiftPlanKg,
   PerLift,
   Problem,
+  TradeoffRequest,
 } from "../pkg/attempt_sim_wasm.js";
 
 export const LIFTS = ["squat", "bench", "deadlift"] as const satisfies Lift[];
@@ -48,10 +50,8 @@ const perLift = <T>(value: (lift: Lift) => T): PerLift<T> => ({
   deadlift: value("deadlift"),
 });
 
-export function buildRequest(
-  values: FormValues,
-  precise: boolean,
-): EvaluateRequest {
+/** The lifter and goal for the tradeoff sweep, always at the quick count. */
+export function buildTradeoffRequest(values: FormValues): TradeoffRequest {
   const read = (lift: Lift, field: LiftField) => values[inputName(lift, field)];
   return {
     lifter: {
@@ -67,6 +67,19 @@ export function buildRequest(
         correlation: values.correlation,
       },
     },
+    ...(Number.isNaN(values.goalKg) ? {} : { goalKg: values.goalKg }),
+    simulations: QUICK_SIMULATIONS,
+    seed: SEED,
+  };
+}
+
+export function buildRequest(
+  values: FormValues,
+  precise: boolean,
+): EvaluateRequest {
+  const read = (lift: Lift, field: LiftField) => values[inputName(lift, field)];
+  return {
+    ...buildTradeoffRequest(values),
     plans: perLift((lift) => ({
       openerKg: read(lift, "openerKg"),
       second: {
@@ -78,10 +91,23 @@ export function buildRequest(
         afterMissKg: read(lift, "thirdAfterMissKg"),
       },
     })),
-    ...(Number.isNaN(values.goalKg) ? {} : { goalKg: values.goalKg }),
     simulations: precise ? PRECISE_SIMULATIONS : QUICK_SIMULATIONS,
-    seed: SEED,
   };
+}
+
+/** The plan inputs, with their values, that make `buildRequest` carry these plans. */
+export function planValues(plans: PerLift<LiftPlanKg>): [InputName, number][] {
+  return LIFTS.flatMap((lift) => {
+    const plan = plans[lift];
+    const values: [LiftField, number][] = [
+      ["openerKg", plan.openerKg],
+      ["secondAfterMakeKg", plan.second.afterMakeKg],
+      ["secondAfterMissKg", plan.second.afterMissKg],
+      ["thirdAfterMakeKg", plan.third.afterMakeKg],
+      ["thirdAfterMissKg", plan.third.afterMissKg],
+    ];
+    return values.map(([field, kg]) => [inputName(lift, field), kg]);
+  });
 }
 
 const PROBLEM_LIFT_FIELDS: Partial<Record<InputField, LiftField[]>> = {
