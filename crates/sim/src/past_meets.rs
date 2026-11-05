@@ -117,7 +117,13 @@ fn shared_uncertainty(lifts: &PerLift<Option<LiftEstimate>>) -> f64 {
         .iter()
         .filter_map(|&lift| Some(lifts.get(lift).as_ref()?.uncertainty))
         .collect();
-    (estimated.iter().sum::<f64>() / estimated.len() as f64).max(LEAST_SHARED_UNCERTAINTY)
+    let mean = estimated.iter().sum::<f64>() / estimated.len() as f64;
+    // An uncertainty that could not be worked out stays NaN rather than the surest value.
+    if mean.is_nan() {
+        mean
+    } else {
+        mean.max(LEAST_SHARED_UNCERTAINTY)
+    }
 }
 
 impl LiftEstimate {

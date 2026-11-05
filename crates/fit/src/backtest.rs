@@ -251,7 +251,12 @@ fn sequential_chances(
                 let average = &mut averaged.get_mut(lift)[i];
                 *average = after(*average, average_made, made);
             }
-            result.get_mut(lift)[attempt] = chance_made / so_far;
+            // After an attempt the model calls impossible, every later chance is 0 / 0.
+            result.get_mut(lift)[attempt] = if so_far > 0.0 {
+                chance_made / so_far
+            } else {
+                0.0
+            };
             so_far = after(so_far, chance_made, made);
         }
     }
