@@ -87,7 +87,7 @@ Lower log loss is better. On IPF meets up to October 2026 (9,044 lifters, 81,396
 | Chance of each attempt from | Mean predicted | Log loss |
 | --- | --- | --- |
 | The share of that attempt made, after a make or a miss, whatever the load | 78% | 0.447 |
-| The model, with maxes from past meets | 69% | 0.700 |
+| The model, with maxes from past meets | 69% | 0.702 |
 | The model, with maxes from past meets and the opener the lifter chose | 73% | 0.577 |
 
 The model does worse than ignoring the load. It is too pessimistic: attempts it gives under 50% are made 59–63% of the time. Lifters choose their attempts knowing how training went, and taking their opener as evidence of their max helps, but not enough. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 49–61%, but lifters make it 73–76% of the time. Most misses are not about the day max.
