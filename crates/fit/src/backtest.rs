@@ -11,12 +11,14 @@
 //! they chose as evidence of their expected max, as the estimate does for past openers.
 
 use std::num::NonZeroUsize;
+use std::ops::AddAssign;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use attempt_sim::lift::{Lift, PerLift};
-use attempt_sim::model::MakeRateCurve;
+use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::normal::normal_draws;
 use attempt_sim::past_meets::{
-    MaxEstimateInput, OPENER_SPREAD, PastAttempt, PastMeet, estimate_maxes,
+    LiftEstimate, MaxEstimate, MaxEstimateInput, PastAttempt, PastMeet, estimate_maxes,
 };
 
 use crate::data::Entry;
@@ -27,11 +29,8 @@ use crate::stats::is_complete;
 const HELD_OUT_EVERY: u64 = 10;
 /// The past meets used to estimate the maxes, the latest ones.
 const MAX_PAST_MEETS: usize = 6;
-/// The page never sets the uncertainty of the expected max below this.
-const LEAST_UNCERTAINTY: f64 = 0.005;
 /// Keeps the log loss finite for a chance rounded to 0 or 1.
 const SUREST_CHANCE: f64 = 1e-6;
-const LIGHTEST_DAY: f64 = 0.01;
 /// Bounds of the bins of predicted chances, from 0 to 1.
 pub const BIN_EDGES: [f64; 8] = [0.0, 0.5, 0.7, 0.8, 0.9, 0.95, 0.98, 1.0];
 /// Lifters by how many attempts at a lift they missed in their past meets: 0, 1, 2 or more.
@@ -49,6 +48,16 @@ pub fn is_held_out(lifter: &str) -> bool {
 }
 
 /// How well predicted chances match what happened.
+impl AddAssign<&Score> for Score {
+    fn add_assign(&mut self, other: &Score) {
+        self.attempts += other.attempts;
+        self.made += other.made;
+        self.predicted += other.predicted;
+        self.log_loss += other.log_loss;
+        self.brier += other.brier;
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Score {
     pub attempts: usize,
@@ -67,14 +76,6 @@ impl Score {
         self.predicted += chance;
         self.log_loss -= happened.ln();
         self.brier += (1.0 - happened).powi(2);
-    }
-
-    fn merge(&mut self, other: &Score) {
-        self.attempts += other.attempts;
-        self.made += other.made;
-        self.predicted += other.predicted;
-        self.log_loss += other.log_loss;
-        self.brier += other.brier;
     }
 
     fn mean(&self, sum: f64) -> f64 {
@@ -115,9 +116,8 @@ pub struct Scores {
 
 impl Scores {
     fn merge(&mut self, other: &Scores) {
-        let pairs =
-            |a: &mut [Score], b: &[Score]| a.iter_mut().zip(b).for_each(|(a, b)| a.merge(b));
-        self.all.merge(&other.all);
+        let pairs = |a: &mut [Score], b: &[Score]| a.iter_mut().zip(b).for_each(|(a, b)| *a += b);
+        self.all += &other.all;
         for lift in Lift::ALL {
             pairs(self.attempts.get_mut(lift), other.attempts.get(lift));
             pairs(self.past_misses.get_mut(lift), other.past_misses.get(lift));
@@ -144,7 +144,7 @@ impl Backtest {
     fn merge(&mut self, other: &Backtest) {
         self.meets += other.meets;
         self.skipped += other.skipped;
-        self.baseline.merge(&other.baseline);
+        self.baseline += &other.baseline;
         self.past_meets.merge(&other.past_meets);
         self.with_opener.merge(&other.with_opener);
     }
@@ -200,21 +200,11 @@ fn lifters_meets(entries: &[Entry]) -> Vec<Vec<Meet>> {
         .collect()
 }
 
-/// The slot of attempt `attempt` in [`Backtest::attempts`], given whether the one before
-/// was made.
-fn slot(attempt: usize, made_before: bool) -> usize {
-    match (attempt, made_before) {
-        (0, _) => 0,
-        (1, true) => 1,
-        (1, false) => 2,
-        (2, true) => 3,
-        _ => 4,
-    }
-}
-
-fn make_chance(curve: &MakeRateCurve, load_kg: f64, day_max_kg: f64) -> f64 {
-    (1.0 - curve.technical_miss_chance)
-        / (1.0 + (curve.steepness * (load_kg / day_max_kg - curve.ratio_at_half)).exp())
+/// Each attempt's index in [`Scores::attempts`]: the opener, then whether the attempt
+/// before was made.
+fn slots(attempts: &[f64; 3]) -> [usize; 3] {
+    let made = attempts.map(|kg| kg > 0.0);
+    [0, if made[0] { 1 } else { 2 }, if made[1] { 3 } else { 4 }]
 }
 
 /// The chance of making each attempt of a meet, in meet order, given every attempt before
@@ -223,15 +213,11 @@ fn make_chance(curve: &MakeRateCurve, load_kg: f64, day_max_kg: f64) -> f64 {
 fn sequential_chances(
     curves: &PerLift<MakeRateCurve>,
     expected_kg: &PerLift<f64>,
-    spread: f64,
-    correlation: f64,
+    day_form: &DayForm,
     attempts: &PerLift<[f64; 3]>,
 ) -> PerLift<[f64; 3]> {
     let draws: Vec<(f64, f64)> = normal_draws().collect();
-    let (shared, own) = (
-        spread * correlation.sqrt(),
-        spread * (1.0 - correlation).sqrt(),
-    );
+    let weights = day_form.draw_weights();
     let n = draws.len();
     // For each shared draw and each lift: the chance of the lift's attempts so far for
     // each own draw, and averaged over the own draws.
@@ -239,6 +225,9 @@ fn sequential_chances(
     let mut averaged = PerLift::from_fn(|_| vec![1.0; n]);
     let mut so_far = 1.0;
     let mut result = PerLift::from_fn(|_| [0.0; 3]);
+    let after = |before: f64, made_part: f64, made: bool| {
+        if made { made_part } else { before - made_part }
+    };
     for lift in Lift::ALL {
         let (curve, expected) = (curves.get(lift), *expected_kg.get(lift));
         for (attempt, &kg) in attempts.get(lift).iter().enumerate() {
@@ -248,8 +237,8 @@ fn sequential_chances(
                 let row = &mut chances.get_mut(lift)[i * n..(i + 1) * n];
                 let mut average_made = 0.0;
                 for (chance, &(own_z, own_weight)) in row.iter_mut().zip(&draws) {
-                    let day = expected * (1.0 + shared * shared_z + own * own_z).max(LIGHTEST_DAY);
-                    let make = make_chance(curve, load, day);
+                    let day = weights.day_max(expected, shared_z, own_z);
+                    let make = curve.make_probability_kg(load, day);
                     average_made += own_weight * *chance * make;
                     *chance *= if made { make } else { 1.0 - make };
                 }
@@ -260,33 +249,13 @@ fn sequential_chances(
                     .product();
                 chance_made += shared_weight * others * average_made;
                 let average = &mut averaged.get_mut(lift)[i];
-                *average = if made {
-                    average_made
-                } else {
-                    *average - average_made
-                };
+                *average = after(*average, average_made, made);
             }
             result.get_mut(lift)[attempt] = chance_made / so_far;
-            so_far = if made {
-                chance_made
-            } else {
-                so_far - chance_made
-            };
+            so_far = after(so_far, chance_made, made);
         }
     }
     result
-}
-
-/// The expected max and its uncertainty, in log kg, after also taking `opener_kg` as
-/// evidence: an opener that strays from the typical share of the max as much as openers do.
-fn with_opener(log_kg: f64, uncertainty: f64, opener_kg: f64, typical_opener: f64) -> (f64, f64) {
-    let from_opener = (opener_kg / typical_opener).ln();
-    let [past_weight, opener_weight] = [uncertainty, OPENER_SPREAD].map(|sd| sd.powi(-2));
-    let weight = past_weight + opener_weight;
-    (
-        (past_weight * log_kg + opener_weight * from_opener) / weight,
-        weight.powf(-0.5),
-    )
 }
 
 /// Adds the scores of one meet's attempts, given each attempt's predicted chance.
@@ -297,21 +266,34 @@ fn add_meet(
     past_misses: &PerLift<usize>,
 ) {
     for lift in Lift::ALL {
-        let mut made_before = true;
-        let outcomes = attempts.get(lift).iter().zip(chances.get(lift));
-        for (attempt, (&kg, &chance)) in outcomes.enumerate() {
+        let attempts = attempts.get(lift);
+        let outcomes = attempts.iter().zip(chances.get(lift)).zip(slots(attempts));
+        for ((&kg, &chance), slot) in outcomes {
             let made = kg > 0.0;
             scores.all.add(chance, made);
-            scores.attempts.get_mut(lift)[slot(attempt, made_before)].add(chance, made);
+            scores.attempts.get_mut(lift)[slot].add(chance, made);
             scores.past_misses.get_mut(lift)[*past_misses.get(lift)].add(chance, made);
             let bin = BIN_EDGES[1..]
                 .iter()
                 .position(|&edge| chance < edge)
                 .unwrap_or(BIN_EDGES.len() - 2);
             scores.bins[bin].add(chance, made);
-            made_before = made;
         }
     }
+}
+
+/// Each lift's estimate, `None` unless every lift has one with a finite uncertainty.
+fn every_lift(estimate: &MaxEstimate) -> Option<PerLift<LiftEstimate>> {
+    let lifts = estimate.lifts;
+    let lifts = PerLift {
+        squat: lifts.squat?,
+        bench: lifts.bench?,
+        deadlift: lifts.deadlift?,
+    };
+    Lift::ALL
+        .iter()
+        .all(|&lift| lifts.get(lift).uncertainty.is_finite())
+        .then_some(lifts)
 }
 
 /// Scores one lifter's latest meet from the meets before it.
@@ -328,19 +310,13 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet], backtest: &mut Backtest) {
         meets: past.iter().map(Meet::past).collect(),
         on_day: latest.day,
     };
-    let estimates = estimate_maxes(&input).ok().and_then(|estimate| {
-        let lifts = estimate.lifts;
-        let lifts = [lifts.squat?, lifts.bench?, lifts.deadlift?];
-        lifts
-            .iter()
-            .all(|lift| lift.uncertainty.is_finite())
-            .then_some(lifts)
-    });
-    let Some(estimates) = estimates else {
+    let Some(estimate) = estimate_maxes(&input)
+        .ok()
+        .filter(|estimate| every_lift(estimate).is_some())
+    else {
         backtest.skipped += 1;
         return;
     };
-    let estimates = PerLift::from_fn(|lift| estimates[lift as usize]);
     backtest.meets += 1;
 
     let past_misses = PerLift::from_fn(|lift| {
@@ -350,53 +326,28 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet], backtest: &mut Backtest) {
             .count()
             .min(PAST_MISS_GROUPS - 1)
     });
-    // As the page does: one uncertainty for every lift, the average, and at least 0.5%.
-    let mean =
-        |values: PerLift<f64>| Lift::ALL.iter().map(|&lift| values.get(lift)).sum::<f64>() / 3.0;
-    let score = |scores: &mut Scores, log_kg: PerLift<f64>, uncertainty: PerLift<f64>| {
-        let spread = day_form
-            .spread
-            .hypot(mean(uncertainty).max(LEAST_UNCERTAINTY));
-        let expected = log_kg.map(|_, log_kg| log_kg.exp());
-        let chances = sequential_chances(
-            &curves,
-            &expected,
-            spread,
-            day_form.correlation,
-            &latest.attempts,
-        );
+    let score = |scores: &mut Scores, estimate: &MaxEstimate| {
+        let lifts = every_lift(estimate).expect("every lift is estimated");
+        let day_form = DayForm {
+            max_uncertainty: estimate.shared_uncertainty,
+            ..day_form
+        };
+        let expected = lifts.map(|_, lift| lift.expected_max_kg);
+        let chances = sequential_chances(&curves, &expected, &day_form, &latest.attempts);
         add_meet(scores, &latest.attempts, &chances, &past_misses);
     };
-    score(
-        &mut backtest.past_meets,
-        estimates.map(|_, lift| lift.expected_max_kg.ln()),
-        estimates.map(|_, lift| lift.uncertainty),
-    );
-    let informed = estimates.map(|lift, estimate| {
-        let opener_kg = latest.attempts.get(lift)[0].abs();
-        let typical = *typical_opener.get(lift);
-        with_opener(
-            estimate.expected_max_kg.ln(),
-            estimate.uncertainty,
-            opener_kg,
-            typical,
-        )
-    });
+    score(&mut backtest.past_meets, &estimate);
+    let openers = latest.attempts.map(|_, attempts| attempts[0].abs());
     score(
         &mut backtest.with_opener,
-        informed.map(|_, (log_kg, _)| *log_kg),
-        informed.map(|_, (_, uncertainty)| *uncertainty),
+        &estimate.with_openers(&openers, &typical_opener),
     );
 
     for lift in Lift::ALL {
         let slot_rates = fitted.stats.get(lift).make_rates.all();
-        let mut made_before = true;
-        for (attempt, &kg) in latest.attempts.get(lift).iter().enumerate() {
-            let made = kg > 0.0;
-            backtest
-                .baseline
-                .add(slot_rates[slot(attempt, made_before)], made);
-            made_before = made;
+        let attempts = latest.attempts.get(lift);
+        for (&kg, slot) in attempts.iter().zip(slots(attempts)) {
+            backtest.baseline.add(slot_rates[slot], kg > 0.0);
         }
     }
 }
@@ -405,14 +356,14 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet], backtest: &mut Backtest) {
 pub fn backtest(fitted: &Fitted, entries: &[Entry]) -> Backtest {
     let lifters = lifters_meets(entries);
     let threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    let chunk = lifters.len().div_ceil(threads).max(1);
+    // Lifters take very different times, so each thread takes the next one when free.
+    let next = AtomicUsize::new(0);
     std::thread::scope(|scope| {
-        let workers: Vec<_> = lifters
-            .chunks(chunk)
-            .map(|lifters| {
-                scope.spawn(move || {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
                     let mut backtest = Backtest::default();
-                    for meets in lifters {
+                    while let Some(meets) = lifters.get(next.fetch_add(1, Ordering::Relaxed)) {
                         score_lifter(fitted, meets, &mut backtest);
                     }
                     backtest
@@ -480,9 +431,9 @@ mod tests {
 
     #[test]
     fn names_each_attempt_by_whether_the_one_before_was_made() {
-        assert_eq!(slot(0, false), 0);
-        assert_eq!([slot(1, true), slot(1, false)], [1, 2]);
-        assert_eq!([slot(2, true), slot(2, false)], [3, 4]);
+        assert_eq!(slots(&[100.0, 105.0, -110.0]), [0, 1, 3]);
+        assert_eq!(slots(&[-100.0, 100.0, 105.0]), [0, 2, 3]);
+        assert_eq!(slots(&[100.0, -105.0, -105.0]), [0, 1, 4]);
     }
 
     #[test]
@@ -490,11 +441,16 @@ mod tests {
         let curves = PerLift::from_fn(|_| CURVE);
         let expected = PerLift::from_fn(|_| 100.0);
         let attempts = PerLift::from_fn(|_| [90.0, -100.0, 102.5]);
-        let chances = sequential_chances(&curves, &expected, 0.0, 0.4, &attempts);
+        let day_form = DayForm {
+            spread: 0.0,
+            max_uncertainty: 0.0,
+            correlation: 0.4,
+        };
+        let chances = sequential_chances(&curves, &expected, &day_form, &attempts);
         for lift in Lift::ALL {
             for (chance, kg) in chances.get(lift).iter().zip(attempts.get(lift)) {
                 assert!(
-                    close(*chance, make_chance(&CURVE, kg.abs(), 100.0)),
+                    close(*chance, CURVE.make_probability_kg(kg.abs(), 100.0)),
                     "{chances:?}"
                 );
             }
@@ -511,22 +467,16 @@ mod tests {
                 bench: [95.0, 97.5, 100.0],
                 deadlift: [95.0, 97.5, 100.0],
             };
-            sequential_chances(&curves, &expected, 0.05, correlation, &attempts).bench[0]
+            let day_form = DayForm {
+                spread: 0.05,
+                max_uncertainty: 0.0,
+                correlation,
+            };
+            sequential_chances(&curves, &expected, &day_form, &attempts).bench[0]
         };
         let (made, missed) = ([90.0, 95.0, 100.0], [90.0, -95.0, -95.0]);
         assert!(bench_opener(missed, 0.5) < bench_opener(made, 0.5) - 0.05);
         assert!(close(bench_opener(missed, 0.0), bench_opener(made, 0.0)));
-    }
-
-    #[test]
-    fn an_opener_moves_the_estimate_by_how_sure_each_is() {
-        let typical = 0.9;
-        let past = 100f64.ln();
-        let (log_kg, uncertainty) = with_opener(past, OPENER_SPREAD, 99.0, typical);
-        assert!(close(log_kg, (past + (99.0 / typical).ln()) / 2.0));
-        assert!(close(uncertainty, OPENER_SPREAD / 2f64.sqrt()));
-        let (sure, _) = with_opener(past, 0.001, 99.0, typical);
-        assert!((sure - past).abs() < 0.001);
     }
 
     #[test]

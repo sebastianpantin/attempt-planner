@@ -99,7 +99,7 @@ it("asks for an estimate with the page's curves and day-form spread", () => {
   expect(request.onDay).toBe(100);
 });
 
-it("fills in the estimated maxes and their average uncertainty", () => {
+it("fills in the estimated maxes and their shared uncertainty", () => {
   const values = estimateValues({
     lifts: {
       squat: { expectedMaxKg: 201.3, uncertainty: 0.012, meets: 4 },
@@ -107,6 +107,7 @@ it("fills in the estimated maxes and their average uncertainty", () => {
       deadlift: { expectedMaxKg: 244.6, uncertainty: 0.03, meets: 4 },
     },
     yearlyProgress: 0.02,
+    sharedUncertainty: 0.021,
   });
   expect(values).toEqual([
     ["squat-expectedMaxKg", 201.5],

@@ -15,7 +15,9 @@ use crate::model::{DayForm, MakeRateCurve};
 use crate::normal::normal_draws;
 
 /// How far a lifter's opener usually strays from the typical share of their max.
-pub const OPENER_SPREAD: f64 = 0.05;
+const OPENER_SPREAD: f64 = 0.05;
+/// The page never sets the uncertainty of the expected max below this.
+const LEAST_SHARED_UNCERTAINTY: f64 = 0.005;
 /// How fast a lifter is assumed to get stronger before the meets say otherwise: no change
 /// on average, give or take 10% a year.
 const YEARLY_PROGRESS_SPREAD: f64 = 0.1;
@@ -87,6 +89,52 @@ pub struct MaxEstimate {
     /// How much stronger the lifter gets in a year, as a fraction, shared by all lifts. 0
     /// when the meets fall on fewer than two days, which cannot show a trend.
     pub yearly_progress: f64,
+    /// One uncertainty of the expected max for every lift, as the planner takes it: the
+    /// average over the estimated lifts, and at least 0.5%.
+    pub shared_uncertainty: f64,
+}
+
+impl MaxEstimate {
+    /// The estimate after also taking planned openers as evidence, one per lift. See
+    /// [`LiftEstimate::with_opener`].
+    pub fn with_openers(&self, openers_kg: &PerLift<f64>, typical_opener: &PerLift<f64>) -> Self {
+        let lifts = self.lifts.map(|lift, estimate| {
+            estimate.map(|estimate| {
+                estimate.with_opener(*openers_kg.get(lift), *typical_opener.get(lift))
+            })
+        });
+        MaxEstimate {
+            shared_uncertainty: shared_uncertainty(&lifts),
+            lifts,
+            yearly_progress: self.yearly_progress,
+        }
+    }
+}
+
+/// See [`MaxEstimate::shared_uncertainty`].
+fn shared_uncertainty(lifts: &PerLift<Option<LiftEstimate>>) -> f64 {
+    let estimated: Vec<f64> = Lift::ALL
+        .iter()
+        .filter_map(|&lift| Some(lifts.get(lift).as_ref()?.uncertainty))
+        .collect();
+    (estimated.iter().sum::<f64>() / estimated.len() as f64).max(LEAST_SHARED_UNCERTAINTY)
+}
+
+impl LiftEstimate {
+    /// The estimate after also taking a planned opener as evidence: an opener that strays
+    /// from the typical share of the max as much as openers do.
+    pub fn with_opener(&self, opener_kg: f64, typical_opener: f64) -> LiftEstimate {
+        let from_opener = (opener_kg / typical_opener).ln();
+        let [past_weight, opener_weight] = [self.uncertainty, OPENER_SPREAD].map(|sd| sd.powi(-2));
+        let weight = past_weight + opener_weight;
+        let log_kg =
+            (past_weight * self.expected_max_kg.ln() + opener_weight * from_opener) / weight;
+        LiftEstimate {
+            expected_max_kg: log_kg.exp(),
+            uncertainty: weight.powf(-0.5),
+            meets: self.meets,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,10 +212,7 @@ fn chance_of_outcomes(
             let chance: f64 = attempts
                 .iter()
                 .map(|attempt| {
-                    let make = (1.0 - curve.technical_miss_chance)
-                        / (1.0
-                            + (curve.steepness * (attempt.kg / day_max_kg - curve.ratio_at_half))
-                                .exp());
+                    let make = curve.make_probability_kg(attempt.kg, day_max_kg);
                     if attempt.made { make } else { 1.0 - make }
                 })
                 .product();
@@ -314,6 +359,7 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
         })
     });
     Ok(MaxEstimate {
+        shared_uncertainty: shared_uncertainty(&lifts),
         lifts,
         yearly_progress: if fits_trend {
             best[PROGRESS].exp_m1()
@@ -445,6 +491,40 @@ mod tests {
         );
         let uncertainty = on_the_day.lifts.squat.unwrap().uncertainty;
         assert!(uncertainty > 0.0 && uncertainty < 0.1, "{uncertainty}");
+    }
+
+    #[test]
+    fn the_lifts_share_their_average_uncertainty_and_at_least_half_a_percent() {
+        let estimate = estimate_maxes(&input(simulated_meets(levels(), 0.0, 3), 700)).unwrap();
+        let mean = Lift::ALL
+            .iter()
+            .map(|&lift| estimate.lifts.get(lift).unwrap().uncertainty)
+            .sum::<f64>()
+            / 3.0;
+        assert!((estimate.shared_uncertainty - mean.max(0.005)).abs() < 1e-12);
+        let sure = estimate_maxes(&input(simulated_meets(levels(), 0.0, 40), 0)).unwrap();
+        assert!(sure.shared_uncertainty >= 0.005, "{sure:?}");
+    }
+
+    #[test]
+    fn an_opener_moves_the_estimate_by_how_sure_each_is() {
+        let estimate = LiftEstimate {
+            expected_max_kg: 100.0,
+            uncertainty: OPENER_SPREAD,
+            meets: 2,
+        };
+        let informed = estimate.with_opener(99.0, 0.9);
+        let midpoint = ((100f64.ln() + (99.0f64 / 0.9).ln()) / 2.0).exp();
+        assert!(
+            (informed.expected_max_kg - midpoint).abs() < 1e-9,
+            "{informed:?}"
+        );
+        assert!((informed.uncertainty - OPENER_SPREAD / 2f64.sqrt()).abs() < 1e-12);
+        let sure = LiftEstimate {
+            uncertainty: 0.001,
+            ..estimate
+        };
+        assert!((sure.with_opener(99.0, 0.9).expected_max_kg - 100.0).abs() < 0.1);
     }
 
     #[test]

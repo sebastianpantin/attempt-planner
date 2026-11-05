@@ -23,7 +23,7 @@ use attempt_sim::lift::Lift;
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let (mut federation, mut sex, mut path) = (None, None, None);
-    let mut scores = false;
+    let mut run_backtest = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--federation" => {
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 )
             }
             "--sex" => sex = Some(args.next().ok_or("--sex needs M or F")?),
-            "--backtest" => scores = true,
+            "--backtest" => run_backtest = true,
             _ => path = Some(PathBuf::from(arg)),
         }
     }
@@ -46,15 +46,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let started = Instant::now();
     let entries = raw_full_power_entries(BufReader::new(File::open(&path)?), filter)?;
-    if scores {
-        let (held_out, fitted_to): (Vec<Entry>, Vec<Entry>) = entries
-            .into_iter()
-            .partition(|entry| is_held_out(&entry.lifter));
-        let fitted = fit(&fitted_to)?;
-        print_fit(&fitted);
+    let (held_out, fitted_to): (Vec<Entry>, Vec<Entry>) = entries
+        .into_iter()
+        .partition(|entry| run_backtest && is_held_out(&entry.lifter));
+    let fitted = fit(&fitted_to)?;
+    print_fit(&fitted);
+    if run_backtest {
         print_backtest(&backtest(&fitted, &held_out));
-    } else {
-        print_fit(&fit(&entries)?);
     }
     println!("took {:.1} s", started.elapsed().as_secs_f64());
     Ok(())

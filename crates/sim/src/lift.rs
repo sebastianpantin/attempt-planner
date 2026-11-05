@@ -45,6 +45,12 @@ pub struct PerLift<T> {
     pub deadlift: T,
 }
 
+impl PerLift<f64> {
+    pub fn mean(&self) -> f64 {
+        (self.squat + self.bench + self.deadlift) / 3.0
+    }
+}
+
 impl<T> PerLift<T> {
     pub fn from_fn(mut f: impl FnMut(Lift) -> T) -> Self {
         Self {
