@@ -6,8 +6,19 @@ pub fn minimize<const N: usize>(
     start: [f64; N],
     steps: [f64; N],
 ) -> [f64; N] {
-    const MAX_EVALUATIONS: usize = 5_000;
-    const TOLERANCE: f64 = 1e-14;
+    minimize_to(f, start, steps, 1e-14, 5_000)
+}
+
+/// Like [`minimize`], stopping once the values of the search's points are within
+/// `tolerance` of each other, relative to the lowest, or after `max_evaluations` calls of
+/// `f`: for a costly `f`.
+pub fn minimize_to<const N: usize>(
+    f: impl Fn([f64; N]) -> f64,
+    start: [f64; N],
+    steps: [f64; N],
+    tolerance: f64,
+    max_evaluations: usize,
+) -> [f64; N] {
     let mut simplex: Vec<([f64; N], f64)> = std::iter::once(start)
         .chain((0..N).map(|i| {
             let mut point = start;
@@ -20,10 +31,10 @@ pub fn minimize<const N: usize>(
         std::array::from_fn(|i| from[i] + t * (to[i] - from[i]))
     };
     let mut evaluations = simplex.len();
-    while evaluations < MAX_EVALUATIONS {
+    while evaluations < max_evaluations {
         simplex.sort_by(|a, b| a.1.total_cmp(&b.1));
         let (best, worst) = (simplex[0].1, simplex[N].1);
-        if worst - best <= TOLERANCE * (best.abs() + TOLERANCE) {
+        if worst - best <= tolerance * (best.abs() + tolerance) {
             break;
         }
         let centre: [f64; N] =

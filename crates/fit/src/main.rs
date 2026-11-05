@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let fitted = fit(&fitted_to)?;
     print_fit(&fitted);
     if run_backtest {
-        print_backtest(&backtest(&fitted, &held_out));
+        print_backtest(&backtest(&fitted, &fitted_to, &held_out));
     }
     println!("took {:.1} s", started.elapsed().as_secs_f64());
     Ok(())
@@ -134,6 +134,14 @@ fn print_backtest(backtest: &Backtest) {
         "backtest: latest meet of {} held-out lifters, {} skipped",
         backtest.meets, backtest.skipped
     );
+    for (name, choice) in ["alike", "prone share"].iter().zip(&backtest.load_choices) {
+        let [a, b, c, d] = choice.log_shares.map(|share| share.exp() * 100.0);
+        println!(
+            "  {name}: 2nd at {a:.1}% / {b:.1}% and 3rd at {c:.1}% / {d:.1}% of the day max after a \
+             make / miss, give or take {:.1}%",
+            choice.spread * 100.0
+        );
+    }
     print_score("share made, any load", &backtest.baseline);
     for (name, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
         print_score(name, &scores.all);

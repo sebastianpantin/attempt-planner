@@ -15,6 +15,7 @@ use std::ops::AddAssign;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use attempt_sim::lift::{Lift, PerLift};
+use attempt_sim::minimize::minimize_to;
 use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::normal::normal_draws;
 use attempt_sim::past_meets::{
@@ -137,22 +138,49 @@ pub struct Backtest {
     pub baseline: Score,
     /// Named in [`SCENARIOS`].
     pub scenarios: [Scores; SCENARIOS.len()],
+    /// The fitted load choice of each model: every lifter alike, then with prone lifters.
+    pub load_choices: [LoadChoice; 2],
+}
+
+impl Default for LoadChoice {
+    fn default() -> Self {
+        LoadChoice {
+            log_shares: [0.0; 4],
+            spread: 1.0,
+        }
+    }
 }
 
 /// Each way of predicting the chances: which model, and where the expected maxes come
 /// from. "Past meets and the opener" also takes the opener the lifter chose as evidence.
 /// A lifter's own kind is the share of prone lifters updated by their past meets.
-pub const SCENARIOS: [&str; 6] = [
+/// "Loads chosen on the day" also takes each 2nd and 3rd attempt the lifter chose as
+/// evidence of their day max, through a fitted [`LoadChoice`].
+pub const SCENARIOS: [&str; 8] = [
     "alike, from past meets",
     "alike, from past meets and the opener",
     "prone share, from past meets",
     "prone share, from past meets and the opener",
     "own kind, from past meets",
     "own kind, from past meets and the opener",
+    "alike, opener and loads chosen on the day",
+    "prone share, opener and loads chosen on the day",
 ];
 
-impl Backtest {
-    fn merge(&mut self, other: &Backtest) {
+/// How lifters choose their 2nd and 3rd attempts knowing how the day is going: at a
+/// typical share of their day max, give or take a spread. Taken as evidence, a heavy
+/// chosen attempt says the day is good.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoadChoice {
+    /// The log of the typical share of the day max: 2nd attempt after a made and after a
+    /// missed opener, then 3rd attempt after a made and after a missed 2nd.
+    pub log_shares: [f64; 4],
+    /// Standard deviation of the log of the chosen share around the typical one.
+    pub spread: f64,
+}
+
+impl AddAssign<&Backtest> for Backtest {
+    fn add_assign(&mut self, other: &Backtest) {
         self.meets += other.meets;
         self.skipped += other.skipped;
         self.baseline += &other.baseline;
@@ -232,6 +260,7 @@ fn sequential_chances(
     expected_kg: &PerLift<f64>,
     day_form: &DayForm,
     attempts: &PerLift<[f64; 3]>,
+    choice: Option<&LoadChoice>,
 ) -> PerLift<[f64; 3]> {
     let draws: Vec<(f64, f64)> = normal_draws().collect();
     let weights = day_form.draw_weights();
@@ -248,8 +277,29 @@ fn sequential_chances(
     };
     for lift in Lift::ALL {
         let expected = *expected_kg.get(lift);
+        let slots = slots(attempts.get(lift));
         for (attempt, &kg) in attempts.get(lift).iter().enumerate() {
             let (load, made) = (kg.abs(), kg > 0.0);
+            if let Some(choice) = choice.filter(|_| attempt > 0) {
+                let log_share = choice.log_shares[slots[attempt] - 1];
+                so_far = 0.0;
+                for (i, &(shared_z, shared_weight)) in draws.iter().enumerate() {
+                    let mut average = 0.0;
+                    for (j, &(own_z, own_weight)) in draws.iter().enumerate() {
+                        let day = weights.day_max(expected, shared_z, own_z);
+                        let gap = ((load / day).ln() - log_share) / choice.spread;
+                        let likelihood = (-gap * gap / 2.0).exp();
+                        for (kind, (share, _)) in kinds.get(lift).iter().enumerate() {
+                            let chance = &mut chances.get_mut(lift)[(kind * n + i) * n + j];
+                            *chance *= likelihood;
+                            average += share * own_weight * *chance;
+                        }
+                    }
+                    averaged.get_mut(lift)[i] = average;
+                    let all: f64 = Lift::ALL.iter().map(|&l| averaged.get(l)[i]).product();
+                    so_far += shared_weight * all;
+                }
+            }
             let mut chance_made = 0.0;
             for (i, &(shared_z, shared_weight)) in draws.iter().enumerate() {
                 let mut average_made = 0.0;
@@ -369,11 +419,110 @@ fn estimate(model: &Model, past: &[Meet], on_day: i32) -> Option<MaxEstimate> {
         .filter(|estimate| every_lift(estimate).is_some())
 }
 
+/// The expected maxes and day form the planner would use with this estimate.
+fn planned(model: &Model, estimate: &MaxEstimate) -> (PerLift<f64>, DayForm) {
+    let lifts = every_lift(estimate).expect("every lift is estimated");
+    let day_form = DayForm {
+        max_uncertainty: estimate.shared_uncertainty,
+        ..model.day_form
+    };
+    (lifts.map(|_, lift| lift.expected_max_kg), day_form)
+}
+
+/// Lifters whose meets the load choice is fitted to, at most.
+const CHOICE_LIFTERS: usize = 2_000;
+
+/// The [`LoadChoice`] under which `model`'s chances of the latest meets of some of
+/// `entries`' lifters, with maxes from past meets and the opener, have the lowest log loss.
+pub fn fit_load_choice(model: &Model, entries: &[Entry]) -> LoadChoice {
+    let lifters = lifters_meets(entries);
+    let step = lifters.len().div_ceil(CHOICE_LIFTERS).max(1);
+    let meets: Vec<_> = lifters
+        .iter()
+        .step_by(step)
+        .filter_map(|meets| {
+            let (latest, past) = meets.split_last()?;
+            let past = &past[past.len().saturating_sub(MAX_PAST_MEETS)..];
+            let openers = latest.attempts.map(|_, attempts| attempts[0].abs());
+            let estimate =
+                estimate(model, past, latest.day)?.with_openers(&openers, &model.typical_opener);
+            every_lift(&estimate)?;
+            let (expected, day_form) = planned(model, &estimate);
+            Some((latest.attempts, expected, day_form))
+        })
+        .collect();
+    let choice =
+        |[second_make, second_miss, third_make, third_miss, log_spread]: [f64; 5]| LoadChoice {
+            log_shares: [second_make, second_miss, third_make, third_miss],
+            spread: log_spread.exp(),
+        };
+    let log_loss = |point: [f64; 5]| {
+        let choice = choice(point);
+        in_parallel(&meets, |(attempts, expected, day_form)| {
+            let chances =
+                sequential_chances(&model.kinds, expected, day_form, attempts, Some(&choice));
+            let mut score = Score::default();
+            for lift in Lift::ALL {
+                for (&kg, &chance) in attempts.get(lift).iter().zip(chances.get(lift)) {
+                    score.add(chance, kg > 0.0);
+                }
+            }
+            score
+        })
+        .log_loss()
+    };
+    let start = [
+        0.95f64.ln(),
+        0.9f64.ln(),
+        0.99f64.ln(),
+        0.95f64.ln(),
+        0.04f64.ln(),
+    ];
+    choice(minimize_to(
+        log_loss,
+        start,
+        [0.02, 0.02, 0.02, 0.02, 0.3],
+        1e-6,
+        400,
+    ))
+}
+
+/// Folds `work` over `items` on every core, each thread taking the next item when free.
+fn in_parallel<T: Sync, R: Default + Send + for<'a> AddAssign<&'a R>>(
+    items: &[T],
+    work: impl Fn(&T) -> R + Sync,
+) -> R {
+    let threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut total = R::default();
+                    while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        total += &work(item);
+                    }
+                    total
+                })
+            })
+            .collect();
+        workers.into_iter().fold(R::default(), |mut total, worker| {
+            total += &worker.join().expect("a worker thread panicked");
+            total
+        })
+    })
+}
+
 /// Scores one lifter's latest meet from the meets before it, in each of [`SCENARIOS`].
-fn score_lifter(fitted: &Fitted, models: &[Model; 2], meets: &[Meet], backtest: &mut Backtest) {
+fn score_lifter(
+    fitted: &Fitted,
+    models: &[(Model, LoadChoice); 2],
+    meets: &[Meet],
+    backtest: &mut Backtest,
+) {
     let (latest, past) = meets.split_last().expect("two or more meets");
     let past = &past[past.len().saturating_sub(MAX_PAST_MEETS)..];
-    let [alike, prone] = models;
+    let [(alike, alike_choice), (prone, prone_choice)] = models;
     let (Some(alike_estimate), Some(prone_estimate)) = (
         estimate(alike, past, latest.day),
         estimate(prone, past, latest.day),
@@ -392,27 +541,43 @@ fn score_lifter(fitted: &Fitted, models: &[Model; 2], meets: &[Meet], backtest: 
     });
     let openers = latest.attempts.map(|_, attempts| attempts[0].abs());
     let own = own_kinds(prone, &prone_estimate, past, latest.day);
+    let with_opener = |model: &Model, estimate: &MaxEstimate| {
+        estimate.with_openers(&openers, &model.typical_opener)
+    };
     let ways = [
-        (alike, alike.kinds, &alike_estimate),
-        (prone, prone.kinds, &prone_estimate),
-        (prone, own, &prone_estimate),
+        (alike, alike.kinds, alike_estimate, None),
+        (
+            alike,
+            alike.kinds,
+            with_opener(alike, &alike_estimate),
+            None,
+        ),
+        (prone, prone.kinds, prone_estimate, None),
+        (
+            prone,
+            prone.kinds,
+            with_opener(prone, &prone_estimate),
+            None,
+        ),
+        (prone, own, prone_estimate, None),
+        (prone, own, with_opener(prone, &prone_estimate), None),
+        (
+            alike,
+            alike.kinds,
+            with_opener(alike, &alike_estimate),
+            Some(alike_choice),
+        ),
+        (
+            prone,
+            prone.kinds,
+            with_opener(prone, &prone_estimate),
+            Some(prone_choice),
+        ),
     ];
-    let mut scenarios = backtest.scenarios.iter_mut();
-    for (model, kinds, estimate) in ways {
-        for estimate in [
-            *estimate,
-            estimate.with_openers(&openers, &model.typical_opener),
-        ] {
-            let lifts = every_lift(&estimate).expect("every lift is estimated");
-            let day_form = DayForm {
-                max_uncertainty: estimate.shared_uncertainty,
-                ..model.day_form
-            };
-            let expected = lifts.map(|_, lift| lift.expected_max_kg);
-            let chances = sequential_chances(&kinds, &expected, &day_form, &latest.attempts);
-            let scores = scenarios.next().expect("a scenario for each way");
-            add_meet(scores, &latest.attempts, &chances, &past_misses);
-        }
+    for ((model, kinds, estimate, choice), scores) in ways.iter().zip(&mut backtest.scenarios) {
+        let (expected, day_form) = planned(model, estimate);
+        let chances = sequential_chances(kinds, &expected, &day_form, &latest.attempts, *choice);
+        add_meet(scores, &latest.attempts, &chances, &past_misses);
     }
 
     for lift in Lift::ALL {
@@ -424,32 +589,19 @@ fn score_lifter(fitted: &Fitted, models: &[Model; 2], meets: &[Meet], backtest: 
     }
 }
 
-/// Scores the model fitted to `fitted` on the held-out lifters among `entries`.
-pub fn backtest(fitted: &Fitted, entries: &[Entry]) -> Backtest {
-    let lifters = lifters_meets(entries);
-    let models = [fitted.model(), fitted.kinds_model()];
-    let threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    // Lifters take very different times, so each thread takes the next one when free.
-    let next = AtomicUsize::new(0);
-    std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut backtest = Backtest::default();
-                    while let Some(meets) = lifters.get(next.fetch_add(1, Ordering::Relaxed)) {
-                        score_lifter(fitted, &models, meets, &mut backtest);
-                    }
-                    backtest
-                })
-            })
-            .collect();
-        workers
-            .into_iter()
-            .fold(Backtest::default(), |mut total, worker| {
-                total.merge(&worker.join().expect("a backtest thread panicked"));
-                total
-            })
-    })
+/// Scores the models fitted to `fitted` on the held-out lifters among `held_out`, with
+/// the load choice fitted to some of the lifters in `fitted_to`.
+pub fn backtest(fitted: &Fitted, fitted_to: &[Entry], held_out: &[Entry]) -> Backtest {
+    let models = [fitted.model(), fitted.kinds_model()]
+        .map(|model| (model, fit_load_choice(&model, fitted_to)));
+    let lifters = lifters_meets(held_out);
+    let mut backtest = in_parallel(&lifters, |meets| {
+        let mut backtest = Backtest::default();
+        score_lifter(fitted, &models, meets, &mut backtest);
+        backtest
+    });
+    backtest.load_choices = models.map(|(_, choice)| choice);
+    backtest
 }
 
 #[cfg(test)]
@@ -519,7 +671,7 @@ mod tests {
             max_uncertainty: 0.0,
             correlation: 0.4,
         };
-        let chances = sequential_chances(&curves, &expected, &day_form, &attempts);
+        let chances = sequential_chances(&curves, &expected, &day_form, &attempts, None);
         for lift in Lift::ALL {
             for (chance, kg) in chances.get(lift).iter().zip(attempts.get(lift)) {
                 assert!(
@@ -545,7 +697,7 @@ mod tests {
                 max_uncertainty: 0.0,
                 correlation,
             };
-            sequential_chances(&curves, &expected, &day_form, &attempts).bench[0]
+            sequential_chances(&curves, &expected, &day_form, &attempts, None).bench[0]
         };
         let (made, missed) = ([90.0, 95.0, 100.0], [90.0, -95.0, -95.0]);
         assert!(bench_opener(missed, 0.5) < bench_opener(made, 0.5) - 0.05);
