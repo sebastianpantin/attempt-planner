@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use attempt_fit::backtest::{
-    BIN_EDGES, Backtest, PAST_MISS_GROUPS, SCENARIOS, Score, Scores, backtest, is_held_out,
+    BIN_EDGES, Backtest, LoadChoice, PAST_MISS_GROUPS, SCENARIOS, Score, Scores, backtest,
+    is_held_out,
 };
 use attempt_fit::calibrate::MakeRates;
 use attempt_fit::data::{Entry, Filter, raw_full_power_entries};
@@ -52,7 +53,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let fitted = fit(&fitted_to)?;
     print_fit(&fitted);
     if run_backtest {
-        print_backtest(&backtest(&fitted, &fitted_to, &held_out));
+        let (backtest, load_choices) = backtest(&fitted, &fitted_to, &held_out);
+        print_backtest(&backtest, &load_choices);
     }
     println!("took {:.1} s", started.elapsed().as_secs_f64());
     Ok(())
@@ -62,7 +64,7 @@ fn print_fit(fitted: &Fitted) {
     println!("make rates: opener, 2nd after make/miss, 3rd after make/miss (%)");
     println!(
         "spread of the day max {:.1}%",
-        fitted.calibrations.squat.params.spread * 100.0
+        fitted.total_spread() * 100.0
     );
     let history = fitted.history;
     let day_form = fitted.model().day_form;
@@ -129,12 +131,12 @@ fn print_fit(fitted: &Fitted) {
     }
 }
 
-fn print_backtest(backtest: &Backtest) {
+fn print_backtest(backtest: &Backtest, load_choices: &[LoadChoice; 2]) {
     println!(
         "backtest: latest meet of {} held-out lifters, {} skipped",
         backtest.meets, backtest.skipped
     );
-    for (name, choice) in ["alike", "prone share"].iter().zip(&backtest.load_choices) {
+    for (name, choice) in ["alike", "prone share"].iter().zip(load_choices) {
         let [a, b, c, d] = choice.log_shares.map(|share| share.exp() * 100.0);
         println!(
             "  {name}: 2nd at {a:.1}% / {b:.1}% and 3rd at {c:.1}% / {d:.1}% of the day max after a \
@@ -143,11 +145,11 @@ fn print_backtest(backtest: &Backtest) {
         );
     }
     print_score("share made, any load", &backtest.baseline);
-    for (name, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
-        print_score(name, &scores.all);
+    for (scenario, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
+        print_score(scenario.name, &scores.all);
     }
-    for (name, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
-        println!("{name}");
+    for (scenario, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
+        println!("{}", scenario.name);
         print_scores(scores);
     }
 }

@@ -6,7 +6,7 @@ use std::ops::RangeInclusive;
 use attempt_sim::lift::{Lift, PerLift};
 
 use crate::calibrate::OpenerMisses;
-use crate::data::Entry;
+use crate::data::{Entry, by_lifter_and_day};
 use crate::stats::is_complete;
 
 /// Meets closer than this are too close for a full peak in between, and meets further
@@ -120,12 +120,7 @@ pub fn meet_to_meet(entries: &[Entry]) -> Option<MeetToMeet> {
 /// Each lift's [`OpenerMisses`] over every lifter's consecutive meets where the lift's
 /// attempts are complete. Same-day entries, such as one meet in two divisions, count once.
 pub fn opener_misses(entries: &[Entry]) -> PerLift<OpenerMisses> {
-    let mut meets: Vec<(&str, i32, &PerLift<[f64; 3]>)> = entries
-        .iter()
-        .filter_map(|entry| Some((entry.lifter.as_str(), entry.day?, &entry.attempts)))
-        .collect();
-    meets.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-    meets.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    let meets = by_lifter_and_day(entries);
     // Indexed by whether the opener before was missed: meets, then missed openers.
     let mut counts = PerLift::from_fn(|_| [[0usize; 2]; 2]);
     for [(lifter, _, before), (next_lifter, _, after)] in meets.array_windows() {
@@ -133,7 +128,7 @@ pub fn opener_misses(entries: &[Entry]) -> PerLift<OpenerMisses> {
             continue;
         }
         for lift in Lift::ALL {
-            let (before, after) = (before.get(lift), after.get(lift));
+            let (before, after) = (before.attempts.get(lift), after.attempts.get(lift));
             if !is_complete(*before) || !is_complete(*after) {
                 continue;
             }

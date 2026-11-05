@@ -15,6 +15,8 @@
 //! usually made, after a strength miss on a bad day it usually is not.
 
 use attempt_sim::minimize::{minimize, minimize_to};
+
+use crate::parallel::map_in_parallel;
 use attempt_sim::normal::normal_draws;
 
 /// Each later attempt as a multiple of the attempt before it.
@@ -226,48 +228,46 @@ pub fn calibrate_at_spread(observed: &MakeRates, jumps: &Jumps, spread: f64) -> 
 /// Calibrates every lift with one day-form spread, as the planner uses one spread for
 /// all lifts: the spread with the lowest total error, each lift fitted at that spread.
 pub fn calibrate_lifts(lifts: &[(MakeRates, Jumps)]) -> Vec<Calibration> {
-    let at = |log_spread: f64| -> Vec<Calibration> {
-        lifts
-            .iter()
-            .map(|(observed, jumps)| calibrate_at_spread(observed, jumps, log_spread.exp()))
-            .collect()
-    };
-    let total = |log_spread: f64| at(log_spread).iter().map(|c| c.error).sum::<f64>();
-    let [log_spread] = minimize(|[log_spread]| total(log_spread), [0.04_f64.ln()], [0.3]);
-    at(log_spread)
+    at_shared_spread(
+        |spread| {
+            lifts
+                .iter()
+                .map(|(observed, jumps)| calibrate_at_spread(observed, jumps, spread))
+                .collect()
+        },
+        PLAIN_TOLERANCE,
+    )
 }
 
 /// Like [`calibrate_lifts`], also fitting a share of lifters prone to misses whatever the
 /// load, so that missed openers repeat at a lifter's next meet as often as `opener_misses`
-/// says.
+/// says. The lifts are fitted on threads of their own, as each takes several searches.
 pub fn calibrate_kinds(lifts: &[(MakeRates, OpenerMisses, Jumps)]) -> Vec<Calibration> {
-    // The lifts are fitted on threads of their own: each takes several searches.
-    let at = |log_spread: f64| -> Vec<Calibration> {
-        std::thread::scope(|scope| {
-            let fits: Vec<_> = lifts
-                .iter()
-                .map(|(observed, opener_misses, jumps)| {
-                    scope.spawn(move || {
-                        calibrate_kinds_at_spread(observed, opener_misses, jumps, log_spread.exp())
-                    })
-                })
-                .collect();
-            fits.into_iter()
-                .map(|fit| fit.join().expect("a calibration thread panicked"))
-                .collect()
-        })
-    };
-    let total = |log_spread: f64| at(log_spread).iter().map(|c| c.error).sum::<f64>();
+    at_shared_spread(
+        |spread| {
+            map_in_parallel(lifts, |(observed, opener_misses, jumps)| {
+                calibrate_kinds_at_spread(observed, opener_misses, jumps, spread)
+            })
+        },
+        KINDS_TOLERANCE,
+    )
+}
+
+/// The calibrations `at` a spread gives, at the spread whose total error is lowest.
+fn at_shared_spread(at: impl Fn(f64) -> Vec<Calibration>, tolerance: f64) -> Vec<Calibration> {
+    let total = |log_spread: f64| at(log_spread.exp()).iter().map(|c| c.error).sum::<f64>();
     let [log_spread] = minimize_to(
         |[log_spread]| total(log_spread),
         [0.04_f64.ln()],
         [0.3],
-        KINDS_TOLERANCE,
-        5_000,
+        tolerance,
+        MAX_EVALUATIONS,
     );
-    at(log_spread)
+    at(log_spread.exp())
 }
 
+const PLAIN_TOLERANCE: f64 = 1e-14;
+const MAX_EVALUATIONS: usize = 5_000;
 /// Far finer than the data can tell apart, and much quicker than the plain fit's
 /// tolerance for the larger search.
 const KINDS_TOLERANCE: f64 = 1e-9;
@@ -312,28 +312,19 @@ fn calibrate_kinds_at_spread(
         ]
     };
     let cost = |[s, c, p, q, o]: [f64; 5]| error(&params([s, c, p, q], o));
-    let best = std::thread::scope(|scope| {
-        let searches: Vec<_> = [0.05, 0.15, 0.3]
-            .into_iter()
-            .flat_map(|share| [0.1, 0.3].map(|prone| start(share, prone)))
-            .map(|start| {
-                scope.spawn(move || {
-                    minimize_to(
-                        cost,
-                        start,
-                        [0.3, 0.05, 0.5, 0.5, 0.02],
-                        KINDS_TOLERANCE,
-                        5_000,
-                    )
-                })
-            })
-            .collect();
-        searches
-            .into_iter()
-            .map(|search| search.join().expect("a calibration thread panicked"))
-            .min_by(|a, b| cost(*a).total_cmp(&cost(*b)))
-            .expect("there are starting points")
-    });
+    let starts: Vec<_> = [0.05, 0.15, 0.3]
+        .into_iter()
+        .flat_map(|share| [0.1, 0.3].map(|prone| start(share, prone)))
+        .collect();
+    let steps = [0.3, 0.05, 0.5, 0.5, 0.02];
+    let best = map_in_parallel(&starts, |&start| {
+        let found = minimize_to(cost, start, steps, KINDS_TOLERANCE, MAX_EVALUATIONS);
+        (cost(found), found)
+    })
+    .into_iter()
+    .min_by(|a, b| a.0.total_cmp(&b.0))
+    .expect("there are starting points")
+    .1;
     let [s, c, p, q, o] = best;
     let params = params([s, c, p, q], o);
     Calibration {

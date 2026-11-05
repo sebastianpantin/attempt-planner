@@ -48,25 +48,59 @@ pub fn fit(entries: &[Entry]) -> Result<Fitted, String> {
     })
 }
 
-/// A model to plan with: for each lift, the kinds of lifter as shares and make-rate
-/// curves, with the typical opener and day form.
+/// The kinds of lifter at one lift: most miss whatever the load with the curve's
+/// technical-miss chance, a share is prone to it and misses more often.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Kinds {
+    pub curve: MakeRateCurve,
+    pub prone_share: f64,
+    pub prone_technical_miss_chance: f64,
+}
+
+impl Kinds {
+    /// Each kind's share and chance of no technical miss: the others, then the prone.
+    pub fn shares(&self) -> [(f64, f64); 2] {
+        [
+            (
+                1.0 - self.prone_share,
+                1.0 - self.curve.technical_miss_chance,
+            ),
+            (self.prone_share, 1.0 - self.prone_technical_miss_chance),
+        ]
+    }
+
+    pub fn prone_curve(&self) -> MakeRateCurve {
+        MakeRateCurve {
+            technical_miss_chance: self.prone_technical_miss_chance,
+            ..self.curve
+        }
+    }
+
+    /// The curve with the technical-miss chance averaged over the kinds.
+    pub fn mean_curve(&self) -> MakeRateCurve {
+        MakeRateCurve {
+            technical_miss_chance: self
+                .shares()
+                .iter()
+                .map(|(share, no_miss)| share * (1.0 - no_miss))
+                .sum(),
+            ..self.curve
+        }
+    }
+}
+
+/// A model to plan with: for each lift, the kinds of lifter, with the typical opener and
+/// day form.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Model {
-    pub kinds: PerLift<[(f64, MakeRateCurve); 2]>,
+    pub kinds: PerLift<Kinds>,
     pub typical_opener: PerLift<f64>,
     pub day_form: DayForm,
 }
 
 impl Model {
-    /// Each lift's curve with the technical-miss chance averaged over the kinds of lifter.
     pub fn mean_curves(&self) -> PerLift<MakeRateCurve> {
-        self.kinds.map(|_, kinds| MakeRateCurve {
-            technical_miss_chance: kinds
-                .iter()
-                .map(|(share, curve)| share * curve.technical_miss_chance)
-                .sum(),
-            ..kinds[0].1
-        })
+        self.kinds.map(|_, kinds| kinds.mean_curve())
     }
 }
 
@@ -91,21 +125,15 @@ impl Fitted {
         Model {
             kinds: calibrations.map(|_, calibration| {
                 let params = calibration.params;
-                let curve = |technical_miss_chance| MakeRateCurve {
-                    ratio_at_half: 1.0,
-                    steepness: params.steepness,
-                    technical_miss_chance,
-                };
-                [
-                    (
-                        1.0 - params.prone_share,
-                        curve(params.technical_miss_chance),
-                    ),
-                    (
-                        params.prone_share,
-                        curve(params.prone_technical_miss_chance),
-                    ),
-                ]
+                Kinds {
+                    curve: MakeRateCurve {
+                        ratio_at_half: 1.0,
+                        steepness: params.steepness,
+                        technical_miss_chance: params.technical_miss_chance,
+                    },
+                    prone_share: params.prone_share,
+                    prone_technical_miss_chance: params.prone_technical_miss_chance,
+                }
             }),
             typical_opener: calibrations.map(|_, calibration| calibration.params.opener_ratio),
             day_form: self.day_form(calibrations.squat.params.spread),
