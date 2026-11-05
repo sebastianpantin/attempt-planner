@@ -27,11 +27,7 @@ pub struct MeetToMeet {
 
 impl MeetToMeet {
     pub fn mean_spread(&self) -> f64 {
-        Lift::ALL
-            .iter()
-            .map(|&lift| self.spread.get(lift))
-            .sum::<f64>()
-            / 3.0
+        self.spread.mean()
     }
 
     pub fn mean_correlation(&self) -> f64 {

@@ -74,13 +74,33 @@ cargo run --release -p attempt-fit -- --federation IPF --sex F path/to/openpower
 
 It takes a few seconds. This uses data from the OpenPowerlifting project, https://www.openpowerlifting.org, which is in the public domain; this repository does not include it.
 
+### Backtest
+
+`--backtest` checks the model on meets it has not seen. It fits to nine lifters in ten. For each other lifter with two or more complete meets, it estimates the expected maxes for their latest meet from up to six meets before it, as the page does from past meets. It then gives each attempt of that meet a chance of being made, given the attempts before it, and scores the chances:
+
+```sh
+cargo run --release -p attempt-fit -- --federation IPF --backtest path/to/openpowerlifting.csv
+```
+
+Lower log loss is better. On IPF meets up to October 2026 (9,044 lifters, 81,396 attempts, 78% made):
+
+| Chance of each attempt from | Mean predicted | Log loss |
+| --- | --- | --- |
+| The share of that attempt made, after a make or a miss, whatever the load | 78% | 0.447 |
+| The model, with maxes from past meets | 69% | 0.702 |
+| The model, with maxes from past meets and the opener the lifter chose | 73% | 0.577 |
+
+The model does worse than ignoring the load. It is too pessimistic: attempts it gives under 50% are made 59–63% of the time. Lifters choose their attempts knowing how training went, and taking their opener as evidence of their max helps, but not enough. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 49–61%, but lifters make it 73–76% of the time. Most misses are not about the day max.
+
+The misses also run in lifters. Lifters who missed two or more attempts at a lift in their past meets make 8–11 points fewer, against the model's chance, than lifters who missed none. The model gives every lifter the same technical-miss chance, so it can't tell them apart.
+
 The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 
 ## Layout
 
 - `crates/sim`: the simulator: rules, model, evaluation, the tradeoff sweep and the search. Plain Rust with no WebAssembly dependencies.
 - `crates/sim-wasm`: `wasm-bindgen` bindings for the browser
-- `crates/fit`: calibrates the default make-rate curve to OpenPowerlifting results
+- `crates/fit`: calibrates the default make-rate curve to OpenPowerlifting results and backtests it
 - `web`: the page served on GitHub Pages, built with Vite and TypeScript. The simulation runs in a Web Worker so the page stays responsive.
 
 ## Development

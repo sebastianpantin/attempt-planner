@@ -20,12 +20,22 @@ pub struct MakeRateCurve {
 impl MakeRateCurve {
     /// Chance of making `load`: no technical miss, and the load is not too heavy.
     pub fn make_probability(&self, load: Weight, day_max_kg: f64) -> f64 {
-        (1.0 - self.technical_miss_chance) * self.strength_make_probability(load, day_max_kg)
+        self.make_probability_kg(load.kg(), day_max_kg)
+    }
+
+    /// Like [`make_probability`](Self::make_probability) for any load in kg, such as a
+    /// past attempt in pounds converted to kg.
+    pub fn make_probability_kg(&self, load_kg: f64, day_max_kg: f64) -> f64 {
+        (1.0 - self.technical_miss_chance) * self.strength_make_probability_kg(load_kg, day_max_kg)
     }
 
     /// Chance that `load` is not too heavy for a day max of `day_max_kg`.
     pub fn strength_make_probability(&self, load: Weight, day_max_kg: f64) -> f64 {
-        let ratio = load.kg() / day_max_kg;
+        self.strength_make_probability_kg(load.kg(), day_max_kg)
+    }
+
+    fn strength_make_probability_kg(&self, load_kg: f64, day_max_kg: f64) -> f64 {
+        let ratio = load_kg / day_max_kg;
         1.0 / (1.0 + (self.steepness * (ratio - self.ratio_at_half)).exp())
     }
 
@@ -69,7 +79,7 @@ impl DayForm {
 
     /// How much the shared and the per-lift draw each move a day max, worked out once for
     /// many days.
-    pub(crate) fn draw_weights(&self) -> DrawWeights {
+    pub fn draw_weights(&self) -> DrawWeights {
         let spread = self.total_spread();
         DrawWeights {
             shared: spread * self.correlation.sqrt(),
@@ -92,14 +102,14 @@ impl DayForm {
 
 /// See [`DayForm::draw_weights`].
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DrawWeights {
+pub struct DrawWeights {
     shared: f64,
     own: f64,
 }
 
 impl DrawWeights {
     /// One lift's day max from standard normal draws for the shared and the lift's own part.
-    pub(crate) fn day_max(&self, expected_kg: f64, shared: f64, own: f64) -> f64 {
+    pub fn day_max(&self, expected_kg: f64, shared: f64, own: f64) -> f64 {
         let deviation = self.shared * shared + self.own * own;
         (expected_kg * (1.0 + deviation)).max(expected_kg * DayForm::MIN_DAY_MAX_FRACTION)
     }

@@ -173,7 +173,7 @@ const toTenth = (value: number) => Math.round(value * 10) / 10;
 
 /**
  * The inputs an estimate fills in: each estimated lift's expected max, and the
- * uncertainty of the expected max as the average over the estimated lifts.
+ * uncertainty of the expected max shared by the lifts.
  */
 export function estimateValues(estimate: MaxEstimate): [InputName, number][] {
   const found = LIFTS.flatMap((lift) => {
@@ -185,10 +185,10 @@ export function estimateValues(estimate: MaxEstimate): [InputName, number][] {
     toHalf(expectedMaxKg),
   ]);
   if (found.length > 0) {
-    const mean =
-      found.reduce((sum, { uncertainty }) => sum + uncertainty, 0) /
-      found.length;
-    values.push(["maxUncertaintyPercent", Math.max(0.5, toTenth(mean * 100))]);
+    values.push([
+      "maxUncertaintyPercent",
+      toTenth(estimate.sharedUncertainty * 100),
+    ]);
   }
   return values;
 }
