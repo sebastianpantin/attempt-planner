@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::days::{StepPlan, goal_steps, record_rows};
-use crate::evaluate::{InputProblem, Lifter, MeetDays};
+use crate::evaluate::{InputProblem, LiftModel, Lifter, MeetDays};
 use crate::lift::{Lift, PerLift};
 use crate::outcome::{Outcome, OutcomeTally};
 use crate::plan::{Jumps, LiftPlan};
@@ -137,7 +137,7 @@ pub(crate) fn sweep(days: &MeetDays, goal: Option<Weight>, bomb_out_cap: Option<
     let mut seen = HashSet::new();
     let candidates: Vec<(PlanShape, PerLift<LiftPlan>)> = plan_family()
         .filter_map(|shape| {
-            let plan = |lift: &crate::evaluate::LiftModel| shape.plan(lift.expected_max);
+            let plan = |lift: &LiftModel| shape.plan(lift.expected_max);
             let lifts = &days.lifter().lifts;
             let plans = PerLift {
                 squat: plan(&lifts.squat)?,
@@ -263,7 +263,6 @@ fn best_for_goal(points: &[TradeoffPoint], bomb_out_cap: Option<f64>) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evaluate::LiftModel;
     use crate::model::{DayForm, MakeRateCurve};
     use crate::testing::kg;
 
@@ -433,7 +432,7 @@ mod tests {
     #[test]
     fn no_plan_within_the_bomb_out_cap_means_no_best_plan_for_the_goal() {
         let mut input = input(Some(560.0));
-        for lift in crate::lift::Lift::ALL {
+        for lift in Lift::ALL {
             input.lifter.lifts.get_mut(lift).curve.technical_miss_chance = 0.3;
         }
         let safest = tradeoff(&input)
@@ -471,7 +470,7 @@ mod tests {
     #[test]
     fn maxes_too_light_for_the_family_leave_no_points() {
         let mut input = input(Some(60.0));
-        for lift in crate::lift::Lift::ALL {
+        for lift in Lift::ALL {
             input.lifter.lifts.get_mut(lift).expected_max = kg(20.0);
         }
         let result = tradeoff(&input).unwrap();

@@ -7,7 +7,7 @@ export interface AttemptNode {
 }
 
 /** Every attempt the plan can lead to, or `undefined` while a weight is missing. */
-export function attemptTree(plan: LiftPlanKg): AttemptNode | undefined {
+export function attemptTree(plan: LiftPlanKg) {
   const { second, third } = plan;
   const weights = [plan.openerKg, second.afterMakeKg, second.afterMissKg];
   if (
@@ -15,7 +15,7 @@ export function attemptTree(plan: LiftPlanKg): AttemptNode | undefined {
   ) {
     return undefined;
   }
-  const thirds = (secondKg: number): AttemptNode => ({
+  const thirds = (secondKg: number) => ({
     weightKg: secondKg,
     afterMake: { weightKg: secondKg + third.afterMakeKg },
     afterMiss: { weightKg: secondKg + third.afterMissKg },

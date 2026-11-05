@@ -42,11 +42,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let entries = raw_full_power_entries(BufReader::new(File::open(&path)?), filter)?;
     println!("make rates: opener, 2nd after make/miss, 3rd after make/miss (%)");
-    let stats = Lift::ALL.map(|lift| {
+    let [squat, bench, deadlift] = Lift::ALL.map(|lift| {
         attempt_stats(entries.iter().map(|entry| *entry.attempts.get(lift)))
             .ok_or(format!("not enough {lift} attempts"))
     });
-    let [squat, bench, deadlift] = stats;
     let stats = [squat?, bench?, deadlift?];
     let fits = calibrate_lifts(&stats.map(|s| (s.make_rates, s.jumps)));
     let total_spread = fits[0].params.spread;

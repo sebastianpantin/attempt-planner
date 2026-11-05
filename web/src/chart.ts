@@ -21,7 +21,7 @@ const MAX_WIDTH = 640;
 const HEIGHT = 340;
 const MARGIN = { top: 16, right: 16, bottom: 52, left: 64 };
 
-export const goalColour = scaleSequential(interpolateViridis).domain([0, 1]);
+const goalColour = scaleSequential(interpolateViridis).domain([0, 1]);
 
 export const describePoint = (point: TradeoffPoint) =>
   [

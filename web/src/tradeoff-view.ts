@@ -16,6 +16,13 @@ import { LIFTS } from "./inputs.ts";
 export const shapeLabel = (shape: PlanShape) =>
   `${shape.openerPercent}% / ${shape.secondPercent}% / ${shape.thirdPercent}%`;
 
+const safestFirst = (
+  a: { point: TradeoffPoint },
+  b: { point: TradeoffPoint },
+) =>
+  a.point.bombOutProbability - b.point.bombOutProbability ||
+  b.point.expectedTotalKg - a.point.expectedTotalKg;
+
 export interface HighlightedPoint {
   point: TradeoffPoint;
   bestForGoal: boolean;
@@ -29,15 +36,11 @@ export function highlightedPoints(
   return points
     .map((point, index) => ({ point, bestForGoal: index === bestForGoal }))
     .filter(({ point, bestForGoal }) => point.onFrontier || bestForGoal)
-    .sort(
-      (a, b) =>
-        a.point.bombOutProbability - b.point.bombOutProbability ||
-        b.point.expectedTotalKg - a.point.expectedTotalKg,
-    );
+    .sort(safestFirst);
 }
 
 /** The bomb-out bands the comparison table picks a plan from, by their upper ends. */
-export const RISK_LEVELS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+const RISK_LEVELS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
 
 /** The riskiest band always shown; riskier ones only fill a table with fewer rows. */
 const USUAL_RISK = 0.1;
@@ -96,21 +99,17 @@ export function comparisonRows(
   if (best && !rows.some((row) => row.point === best)) {
     rows.push({ point: best, label: "Best for the goal", bestForGoal: true });
   }
-  return rows.sort(
-    (a, b) =>
-      a.point.bombOutProbability - b.point.bombOutProbability ||
-      b.point.expectedTotalKg - a.point.expectedTotalKg,
-  );
+  return rows.sort(safestFirst);
 }
 
 /** The attempts after makes, "182.5 / 195 / 202.5". */
 export function plannedAttempts(plan: LiftPlanKg): string {
   const opener = attemptTree(plan);
-  const second = opener?.afterMake;
-  const third = second?.afterMake;
-  return opener && second && third
-    ? [opener, second, third].map((node) => weight(node.weightKg)).join(" / ")
-    : "";
+  if (!opener) return "";
+  const second = opener.afterMake;
+  return [opener, second, second.afterMake]
+    .map((node) => weight(node.weightKg))
+    .join(" / ");
 }
 
 /** Each lift's attempts after makes, one line per lift. */

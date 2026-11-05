@@ -148,7 +148,6 @@ pub enum EvaluateResponse {
     Invalid { problems: Vec<Problem> },
 }
 
-/// Converts the request, runs the simulation and returns the evaluation or every problem.
 pub fn evaluate(request: &EvaluateRequest) -> EvaluateResponse {
     match to_input(request).and_then(|input| evaluate::evaluate(&input)) {
         Ok(evaluation) => EvaluateResponse::Evaluated {
@@ -184,13 +183,12 @@ pub enum TradeoffResponse {
     },
 }
 
-/// Converts the request, sweeps the plan family and returns its points or every problem.
 pub fn tradeoff(request: &TradeoffRequest) -> TradeoffResponse {
     match to_tradeoff_input(request).and_then(|input| tradeoff::tradeoff(&input)) {
-        Ok(result) => TradeoffResponse::Swept {
-            points: result.points.into_iter().map(TradeoffPoint::from).collect(),
-            best_for_goal: result.best_for_goal,
-            best_for_search: result.best_for_search,
+        Ok(sweep) => TradeoffResponse::Swept {
+            points: sweep.points.into_iter().map(TradeoffPoint::from).collect(),
+            best_for_goal: sweep.best_for_goal,
+            best_for_search: sweep.best_for_search,
         },
         Err(problems) => TradeoffResponse::Invalid {
             problems: problems.into_iter().map(Problem::from).collect(),
@@ -249,7 +247,6 @@ impl From<search::SearchProgress> for SearchProgress {
     }
 }
 
-/// Converts the request and sets up a search, or returns every problem with the input.
 pub fn start_search(request: &SearchRequest) -> Result<Search, Vec<Problem>> {
     let mut problems = Vec::new();
     let lifter = read_lifter(&mut problems, &request.lifter);
@@ -268,15 +265,11 @@ pub fn start_search(request: &SearchRequest) -> Result<Search, Vec<Problem>> {
         simulations: request.simulations,
         seed: u64::from(request.seed),
     };
-    let search = if problems.is_empty() {
-        Search::new(&input)
-    } else {
-        Err(problems)
-    };
-    search.map_err(|problems| problems.into_iter().map(Problem::from).collect())
+    checked(problems, input)
+        .and_then(|input| Search::new(&input))
+        .map_err(|problems| problems.into_iter().map(Problem::from).collect())
 }
 
-/// How a set of plans does on the simulated meets.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanOutcome {
@@ -305,7 +298,6 @@ impl PlanOutcome {
 pub struct Change {
     pub lift: Lift,
     pub setting: Setting,
-    /// The setting's new weight.
     pub weight_kg: f64,
     pub result: PlanOutcome,
     /// Whether the change ranks above the current plans, as the search ranks plans.
@@ -330,7 +322,6 @@ pub enum ChangesResponse {
     },
 }
 
-/// Scores every one-step change to the request's plans on the same simulated meets.
 pub fn single_changes(request: &SearchRequest) -> ChangesResponse {
     let mut problems = Vec::new();
     let lifter = read_lifter(&mut problems, &request.lifter);
@@ -344,15 +335,10 @@ pub fn single_changes(request: &SearchRequest) -> ChangesResponse {
         simulations: request.simulations,
         seed: u64::from(request.seed),
     };
-    let result = if problems.is_empty() {
-        search::single_changes(&input)
-    } else {
-        Err(problems)
-    };
-    match result {
-        Ok(result) => ChangesResponse::Changed {
-            current: PlanOutcome::new(&plans, result.current),
-            changes: result
+    match checked(problems, input).and_then(|input| search::single_changes(&input)) {
+        Ok(scored) => ChangesResponse::Changed {
+            current: PlanOutcome::new(&plans, scored.current),
+            changes: scored
                 .changes
                 .into_iter()
                 .map(|change| Change {
@@ -374,16 +360,14 @@ fn to_tradeoff_input(request: &TradeoffRequest) -> Result<TradeoffInput, Vec<Inp
     let mut problems = Vec::new();
     let lifter = read_lifter(&mut problems, &request.lifter);
     let goal = read_goal(&mut problems, request.goal_kg);
-    if !problems.is_empty() {
-        return Err(problems);
-    }
-    Ok(TradeoffInput {
+    let input = TradeoffInput {
         lifter,
         goal,
         bomb_out_cap: request.bomb_out_cap,
         simulations: request.simulations,
         seed: u64::from(request.seed),
-    })
+    };
+    checked(problems, input)
 }
 
 fn read_plans(problems: &mut Vec<InputProblem>, plans: &PerLift<LiftPlanKg>) -> PerLift<LiftPlan> {
@@ -426,16 +410,22 @@ fn to_input(request: &EvaluateRequest) -> Result<EvaluateInput, Vec<InputProblem
     let lifter = read_lifter(&mut problems, &request.lifter);
     let plans = read_plans(&mut problems, &request.plans);
     let goal = read_goal(&mut problems, request.goal_kg);
-    if !problems.is_empty() {
-        return Err(problems);
-    }
-    Ok(EvaluateInput {
+    let input = EvaluateInput {
         lifter,
         plans,
         goal,
         simulations: request.simulations,
         seed: u64::from(request.seed),
-    })
+    };
+    checked(problems, input)
+}
+
+fn checked<T>(problems: Vec<InputProblem>, input: T) -> Result<T, Vec<InputProblem>> {
+    if problems.is_empty() {
+        Ok(input)
+    } else {
+        Err(problems)
+    }
 }
 
 fn read_weight(

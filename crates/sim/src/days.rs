@@ -9,7 +9,7 @@ use crate::rules::{ATTEMPTS_PER_LIFT, HEAVIEST, PLATE_STEP, Weight};
 /// three of the heaviest attempts add up to far less than `u16::MAX` steps.
 pub(crate) type Steps = u16;
 
-/// A weight in whole plate steps, rounding a part step down.
+/// Rounds a part step down.
 const fn whole_steps(weight: Weight) -> u32 {
     weight.grams() / PLATE_STEP.grams()
 }
@@ -65,7 +65,6 @@ impl StepPlan {
     }
 }
 
-/// One lift's simulated days.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LiftDays {
     /// For each attempt, each day's lightest weight in plate steps that is missed.
@@ -100,7 +99,6 @@ impl LiftDays {
         );
     }
 
-    /// How many days there are.
     pub(crate) fn len(&self) -> usize {
         self.technical.len()
     }

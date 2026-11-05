@@ -55,7 +55,6 @@ export const CALIBRATIONS: Record<Sex, Calibration> = {
   },
 };
 
-/** The inputs a calibration sets. */
 export function calibrationValues(sex: Sex): [InputName, number][] {
   const calibration = CALIBRATIONS[sex];
   return [

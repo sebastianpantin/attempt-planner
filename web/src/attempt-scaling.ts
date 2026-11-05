@@ -38,7 +38,6 @@ export const defaultShape = (typicalOpener: number): PlanShape => ({
   thirdAfterMissKg: 0,
 });
 
-/** Each lift's default plan for a group's typical openers. */
 export const defaultShapes = (
   typicalOpener: PerLift<number>,
 ): Record<Lift, PlanShape> =>

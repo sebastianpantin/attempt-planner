@@ -141,11 +141,12 @@ pub fn calibrate_at_spread(observed: &MakeRates, jumps: &Jumps, spread: f64) -> 
         .flat_map(|(s, c)| span(0.6, 1.1).map(move |o| [s, c, o]))
         .min_by(|a, b| error(*a).total_cmp(&error(*b)))
         .expect("the grid has points");
-    let point = minimize(error, start, [0.3, 0.05, 0.02]);
+    let params = params(minimize(error, start, [0.3, 0.05, 0.02]));
+    let predicted = predicted_make_rates(&params, jumps);
     Calibration {
-        params: params(point),
-        predicted: predicted_make_rates(&params(point), jumps),
-        error: error(point),
+        params,
+        error: squared_error(&predicted, observed),
+        predicted,
     }
 }
 

@@ -121,11 +121,11 @@ export function barFigures(
   figures: Figures,
   goalKg?: number,
 ): [string, string][] {
-  const goal = knownGoal(figures, goalKg);
-  const lead: [string, string] = goal
-    ? [format.percent(goal.chance), `reach ${format.kg(goal.kg)}`]
-    : [totalKg(figures.totalPercentilesKg.p50), "typical total"];
-  return [lead, [format.percent(figures.bombOutProbability), "bomb-out"]];
+  const { value, label } = ringFigure(figures, goalKg);
+  return [
+    [value, label],
+    [format.percent(figures.bombOutProbability), "bomb-out"],
+  ];
 }
 
 /** The average total said plainly: bomb-outs count as 0 kg, and the average of the meets with a total. */
@@ -170,8 +170,7 @@ export function rangeLayout(totals: Percentiles, goalKg?: number) {
   const margin = high > low ? (high - low) / 4 : 1;
   const start = low - margin;
   const width = high + margin - start;
-  const at = (kg: number) =>
-    kg > 0 && posted.length > 0 ? ((kg - start) / width) * 100 : 0;
+  const at = (kg: number) => (kg > 0 ? ((kg - start) / width) * 100 : 0);
   return {
     fromPercent: at(totals.p10),
     toPercent: at(totals.p90),
