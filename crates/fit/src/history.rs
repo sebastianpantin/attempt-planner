@@ -5,7 +5,9 @@ use std::ops::RangeInclusive;
 
 use attempt_sim::lift::{Lift, PerLift};
 
+use crate::calibrate::OpenerMisses;
 use crate::data::Entry;
+use crate::stats::is_complete;
 
 /// Meets closer than this are too close for a full peak in between, and meets further
 /// apart mix in too much training progress.
@@ -115,6 +117,46 @@ pub fn meet_to_meet(entries: &[Entry]) -> Option<MeetToMeet> {
     })
 }
 
+/// Each lift's [`OpenerMisses`] over every lifter's consecutive meets where the lift's
+/// attempts are complete. Same-day entries, such as one meet in two divisions, count once.
+pub fn opener_misses(entries: &[Entry]) -> PerLift<OpenerMisses> {
+    let mut meets: Vec<(&str, i32, &PerLift<[f64; 3]>)> = entries
+        .iter()
+        .filter_map(|entry| Some((entry.lifter.as_str(), entry.day?, &entry.attempts)))
+        .collect();
+    meets.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    meets.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    // Indexed by whether the opener before was missed: meets, then missed openers.
+    let mut counts = PerLift::from_fn(|_| [[0usize; 2]; 2]);
+    for [(lifter, _, before), (next_lifter, _, after)] in meets.array_windows() {
+        if lifter != next_lifter {
+            continue;
+        }
+        for lift in Lift::ALL {
+            let (before, after) = (before.get(lift), after.get(lift));
+            if !is_complete(*before) || !is_complete(*after) {
+                continue;
+            }
+            let missed_before = usize::from(before[0] < 0.0);
+            let counts = &mut counts.get_mut(lift)[missed_before];
+            counts[0] += 1;
+            counts[1] += usize::from(after[0] < 0.0);
+        }
+    }
+    counts.map(
+        |_,
+         [
+            [after_make, missed_after_make],
+            [after_miss, missed_after_miss],
+        ]| {
+            OpenerMisses {
+                after_miss: *missed_after_miss as f64 / *after_miss as f64,
+                after_make: *missed_after_make as f64 / *after_make as f64,
+            }
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +203,27 @@ mod tests {
         missing.attempts.squat[2] = f64::NAN;
         let entries = [entry("A", 0, [200.0, 100.0, 240.0]), bombed, missing];
         assert_eq!(meet_to_meet(&entries), None);
+    }
+
+    #[test]
+    fn counts_opener_misses_after_a_miss_and_after_a_make_at_the_meet_before() {
+        let opener = |lifter: &str, day: i32, opener: f64| {
+            let mut entry = entry(lifter, day, [100.0, 100.0, 100.0]);
+            entry.attempts.squat[0] = opener;
+            entry
+        };
+        let entries = [
+            opener("A", 0, -90.0),
+            opener("A", 50, -90.0),
+            opener("A", 50, 90.0),
+            opener("A", 100, 90.0),
+            opener("A", 400, -90.0),
+            opener("B", 0, 90.0),
+            opener("C", 0, -90.0),
+        ];
+        let squat = opener_misses(&entries).squat;
+        assert_eq!(squat.after_miss, 0.5);
+        assert_eq!(squat.after_make, 1.0);
     }
 
     #[test]

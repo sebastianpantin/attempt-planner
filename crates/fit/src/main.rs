@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use attempt_fit::backtest::{
-    BIN_EDGES, Backtest, PAST_MISS_GROUPS, Score, Scores, backtest, is_held_out,
+    BIN_EDGES, Backtest, PAST_MISS_GROUPS, SCENARIOS, Score, Scores, backtest, is_held_out,
 };
 use attempt_fit::calibrate::MakeRates;
 use attempt_fit::data::{Entry, Filter, raw_full_power_entries};
@@ -62,10 +62,10 @@ fn print_fit(fitted: &Fitted) {
     println!("make rates: opener, 2nd after make/miss, 3rd after make/miss (%)");
     println!(
         "spread of the day max {:.1}%",
-        fitted.total_spread() * 100.0
+        fitted.calibrations.squat.params.spread * 100.0
     );
     let history = fitted.history;
-    let day_form = fitted.day_form();
+    let day_form = fitted.model().day_form;
     println!(
         "  meet to meet ({} pairs): day form {:.1}% (squat {:.1}%, bench {:.1}%, deadlift {:.1}%)",
         history.pairs,
@@ -105,6 +105,27 @@ fn print_fit(fitted: &Fitted) {
             params.technical_miss_chance * 100.0,
             params.opener_ratio * 100.0
         );
+        let (misses, kinds) = (fitted.opener_misses.get(lift), fitted.kinds.get(lift));
+        let params = kinds.params;
+        println!(
+            "  opener missed after a missed / made opener at the meet before: {:.1} / {:.1}%",
+            misses.after_miss * 100.0,
+            misses.after_make * 100.0
+        );
+        println!(
+            "  with prone lifters, predicted: {}",
+            rates(kinds.predicted)
+        );
+        println!(
+            "  {:.1}% of lifters prone, technical miss chance {:.1}% or {:.1}% when prone, \
+             steepness {:.1}, typical opener {:.1}%, spread {:.1}%",
+            params.prone_share * 100.0,
+            params.technical_miss_chance * 100.0,
+            params.prone_technical_miss_chance * 100.0,
+            params.steepness,
+            params.opener_ratio * 100.0,
+            params.spread * 100.0
+        );
     }
 }
 
@@ -114,18 +135,18 @@ fn print_backtest(backtest: &Backtest) {
         backtest.meets, backtest.skipped
     );
     print_score("share made, any load", &backtest.baseline);
-    for (name, scores) in [
-        ("from past meets", &backtest.past_meets),
-        ("from past meets and the opener", &backtest.with_opener),
-    ] {
-        println!("expected maxes {name}");
+    for (name, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
+        print_score(name, &scores.all);
+    }
+    for (name, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
+        println!("{name}");
         print_scores(scores);
     }
 }
 
 fn print_score(name: &str, score: &Score) {
     println!(
-        "  {name:<24} {:>6} attempts  made {:>5.1}%  predicted {:>5.1}%  log loss {:.4}  brier {:.4}",
+        "  {name:<44} {:>6} attempts  made {:>5.1}%  predicted {:>5.1}%  log loss {:.4}  brier {:.4}",
         score.attempts,
         score.observed() * 100.0,
         score.predicted() * 100.0,

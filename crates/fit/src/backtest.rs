@@ -18,11 +18,12 @@ use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::normal::normal_draws;
 use attempt_sim::past_meets::{
-    LiftEstimate, MaxEstimate, MaxEstimateInput, PastAttempt, PastMeet, estimate_maxes,
+    DAYS_PER_YEAR, LiftEstimate, MAX_TREND_DAYS, MaxEstimate, MaxEstimateInput, PastAttempt,
+    PastMeet, chance_of_outcomes, estimate_maxes,
 };
 
 use crate::data::Entry;
-use crate::fitted::Fitted;
+use crate::fitted::{Fitted, Model};
 use crate::stats::is_complete;
 
 /// One lifter in this many is held out for scoring.
@@ -134,19 +135,30 @@ pub struct Backtest {
     /// Each attempt's chance as the share of that attempt made in the fitted data, after a
     /// make or a miss, whatever the load: what the model must beat.
     pub baseline: Score,
-    /// The expected maxes estimated from past meets alone.
-    pub past_meets: Scores,
-    /// The expected maxes estimated from past meets and the opener the lifter chose.
-    pub with_opener: Scores,
+    /// Named in [`SCENARIOS`].
+    pub scenarios: [Scores; SCENARIOS.len()],
 }
+
+/// Each way of predicting the chances: which model, and where the expected maxes come
+/// from. "Past meets and the opener" also takes the opener the lifter chose as evidence.
+/// A lifter's own kind is the share of prone lifters updated by their past meets.
+pub const SCENARIOS: [&str; 6] = [
+    "alike, from past meets",
+    "alike, from past meets and the opener",
+    "prone share, from past meets",
+    "prone share, from past meets and the opener",
+    "own kind, from past meets",
+    "own kind, from past meets and the opener",
+];
 
 impl Backtest {
     fn merge(&mut self, other: &Backtest) {
         self.meets += other.meets;
         self.skipped += other.skipped;
         self.baseline += &other.baseline;
-        self.past_meets.merge(&other.past_meets);
-        self.with_opener.merge(&other.with_opener);
+        for (scores, other) in self.scenarios.iter_mut().zip(&other.scenarios) {
+            scores.merge(other);
+        }
     }
 }
 
@@ -160,16 +172,20 @@ impl Meet {
     fn past(&self) -> PastMeet {
         PastMeet {
             day: self.day,
-            attempts: self.attempts.map(|_, attempts| {
-                attempts
-                    .iter()
-                    .map(|&kg| PastAttempt {
-                        kg: kg.abs(),
-                        made: kg > 0.0,
-                    })
-                    .collect()
-            }),
+            attempts: self
+                .attempts
+                .map(|_, attempts| Self::past_attempts(attempts)),
         }
+    }
+
+    fn past_attempts(attempts: &[f64; 3]) -> Vec<PastAttempt> {
+        attempts
+            .iter()
+            .map(|&kg| PastAttempt {
+                kg: kg.abs(),
+                made: kg > 0.0,
+            })
+            .collect()
     }
 }
 
@@ -209,9 +225,10 @@ fn slots(attempts: &[f64; 3]) -> [usize; 3] {
 
 /// The chance of making each attempt of a meet, in meet order, given every attempt before
 /// it. The day maxes are drawn as the planner draws them: a part shared by the lifts and a
-/// part of their own, each averaged over a grid of normal draws.
+/// part of their own, each averaged over a grid of normal draws. Each lift's kind of
+/// lifter, as shares and curves, holds for all its attempts.
 fn sequential_chances(
-    curves: &PerLift<MakeRateCurve>,
+    kinds: &PerLift<[(f64, MakeRateCurve); 2]>,
     expected_kg: &PerLift<f64>,
     day_form: &DayForm,
     attempts: &PerLift<[f64; 3]>,
@@ -219,9 +236,10 @@ fn sequential_chances(
     let draws: Vec<(f64, f64)> = normal_draws().collect();
     let weights = day_form.draw_weights();
     let n = draws.len();
-    // For each shared draw and each lift: the chance of the lift's attempts so far for
-    // each own draw, and averaged over the own draws.
-    let mut chances = PerLift::from_fn(|_| vec![1.0; n * n]);
+    // For each lift, kind and shared draw: the chance of the lift's attempts so far for
+    // each own draw. And for each lift and shared draw, that averaged over the own draws
+    // and the kinds.
+    let mut chances = PerLift::from_fn(|_| vec![1.0; 2 * n * n]);
     let mut averaged = PerLift::from_fn(|_| vec![1.0; n]);
     let mut so_far = 1.0;
     let mut result = PerLift::from_fn(|_| [0.0; 3]);
@@ -229,18 +247,21 @@ fn sequential_chances(
         if made { made_part } else { before - made_part }
     };
     for lift in Lift::ALL {
-        let (curve, expected) = (curves.get(lift), *expected_kg.get(lift));
+        let expected = *expected_kg.get(lift);
         for (attempt, &kg) in attempts.get(lift).iter().enumerate() {
             let (load, made) = (kg.abs(), kg > 0.0);
             let mut chance_made = 0.0;
             for (i, &(shared_z, shared_weight)) in draws.iter().enumerate() {
-                let row = &mut chances.get_mut(lift)[i * n..(i + 1) * n];
                 let mut average_made = 0.0;
-                for (chance, &(own_z, own_weight)) in row.iter_mut().zip(&draws) {
-                    let day = weights.day_max(expected, shared_z, own_z);
-                    let make = curve.make_probability_kg(load, day);
-                    average_made += own_weight * *chance * make;
-                    *chance *= if made { make } else { 1.0 - make };
+                for (kind, (share, curve)) in kinds.get(lift).iter().enumerate() {
+                    let start = (kind * n + i) * n;
+                    let row = &mut chances.get_mut(lift)[start..start + n];
+                    for (chance, &(own_z, own_weight)) in row.iter_mut().zip(&draws) {
+                        let day = weights.day_max(expected, shared_z, own_z);
+                        let make = curve.make_probability_kg(load, day);
+                        average_made += share * own_weight * *chance * make;
+                        *chance *= if made { make } else { 1.0 - make };
+                    }
                 }
                 let others: f64 = lift
                     .others()
@@ -261,6 +282,38 @@ fn sequential_chances(
         }
     }
     result
+}
+
+/// Each lift's kinds of lifter with the prone share updated by how likely the lifter's
+/// past attempts are for each kind, given the estimated maxes.
+fn own_kinds(
+    model: &Model,
+    estimate: &MaxEstimate,
+    past: &[Meet],
+    on_day: i32,
+) -> PerLift<[(f64, MakeRateCurve); 2]> {
+    let latest_day = past.iter().map(|meet| meet.day).max().unwrap_or(on_day);
+    let level_day = on_day.min(latest_day.saturating_add(MAX_TREND_DAYS));
+    let growth = (1.0 + estimate.yearly_progress).ln();
+    model.kinds.map(|lift, kinds| {
+        let Some(lift_estimate) = estimate.lifts.get(lift) else {
+            return *kinds;
+        };
+        let likelihood = |curve: &MakeRateCurve| -> f64 {
+            past.iter()
+                .map(|meet| {
+                    let years = f64::from(level_day - meet.day) / DAYS_PER_YEAR;
+                    let level_kg = lift_estimate.expected_max_kg * (-growth * years).exp();
+                    let attempts = Meet::past_attempts(meet.attempts.get(lift));
+                    chance_of_outcomes(curve, &attempts, level_kg, model.day_form.spread).ln()
+                })
+                .sum()
+        };
+        let [(alike_share, alike), (prone_share, prone)] = *kinds;
+        let log_odds = (prone_share / alike_share).ln() + likelihood(&prone) - likelihood(&alike);
+        let prone_share = 1.0 / (1.0 + (-log_odds).exp());
+        [(1.0 - prone_share, alike), (prone_share, prone)]
+    })
 }
 
 /// Adds the scores of one meet's attempts, given each attempt's predicted chance.
@@ -301,24 +354,30 @@ fn every_lift(estimate: &MaxEstimate) -> Option<PerLift<LiftEstimate>> {
         .then_some(lifts)
 }
 
-/// Scores one lifter's latest meet from the meets before it.
-fn score_lifter(fitted: &Fitted, meets: &[Meet], backtest: &mut Backtest) {
-    let (latest, past) = meets.split_last().expect("two or more meets");
-    let past = &past[past.len().saturating_sub(MAX_PAST_MEETS)..];
-    let curves = fitted.curves();
-    let typical_opener = fitted.typical_opener();
-    let day_form = fitted.day_form();
+/// The estimate of each lift's expected max from `past`, `None` unless every lift gets
+/// one with a finite uncertainty.
+fn estimate(model: &Model, past: &[Meet], on_day: i32) -> Option<MaxEstimate> {
     let input = MaxEstimateInput {
-        curves,
-        typical_opener,
-        day_form_spread: day_form.spread,
+        curves: model.mean_curves(),
+        typical_opener: model.typical_opener,
+        day_form_spread: model.day_form.spread,
         meets: past.iter().map(Meet::past).collect(),
-        on_day: latest.day,
+        on_day,
     };
-    let Some(estimate) = estimate_maxes(&input)
+    estimate_maxes(&input)
         .ok()
         .filter(|estimate| every_lift(estimate).is_some())
-    else {
+}
+
+/// Scores one lifter's latest meet from the meets before it, in each of [`SCENARIOS`].
+fn score_lifter(fitted: &Fitted, models: &[Model; 2], meets: &[Meet], backtest: &mut Backtest) {
+    let (latest, past) = meets.split_last().expect("two or more meets");
+    let past = &past[past.len().saturating_sub(MAX_PAST_MEETS)..];
+    let [alike, prone] = models;
+    let (Some(alike_estimate), Some(prone_estimate)) = (
+        estimate(alike, past, latest.day),
+        estimate(prone, past, latest.day),
+    ) else {
         backtest.skipped += 1;
         return;
     };
@@ -331,22 +390,30 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet], backtest: &mut Backtest) {
             .count()
             .min(PAST_MISS_GROUPS - 1)
     });
-    let score = |scores: &mut Scores, estimate: &MaxEstimate| {
-        let lifts = every_lift(estimate).expect("every lift is estimated");
-        let day_form = DayForm {
-            max_uncertainty: estimate.shared_uncertainty,
-            ..day_form
-        };
-        let expected = lifts.map(|_, lift| lift.expected_max_kg);
-        let chances = sequential_chances(&curves, &expected, &day_form, &latest.attempts);
-        add_meet(scores, &latest.attempts, &chances, &past_misses);
-    };
-    score(&mut backtest.past_meets, &estimate);
     let openers = latest.attempts.map(|_, attempts| attempts[0].abs());
-    score(
-        &mut backtest.with_opener,
-        &estimate.with_openers(&openers, &typical_opener),
-    );
+    let own = own_kinds(prone, &prone_estimate, past, latest.day);
+    let ways = [
+        (alike, alike.kinds, &alike_estimate),
+        (prone, prone.kinds, &prone_estimate),
+        (prone, own, &prone_estimate),
+    ];
+    let mut scenarios = backtest.scenarios.iter_mut();
+    for (model, kinds, estimate) in ways {
+        for estimate in [
+            *estimate,
+            estimate.with_openers(&openers, &model.typical_opener),
+        ] {
+            let lifts = every_lift(&estimate).expect("every lift is estimated");
+            let day_form = DayForm {
+                max_uncertainty: estimate.shared_uncertainty,
+                ..model.day_form
+            };
+            let expected = lifts.map(|_, lift| lift.expected_max_kg);
+            let chances = sequential_chances(&kinds, &expected, &day_form, &latest.attempts);
+            let scores = scenarios.next().expect("a scenario for each way");
+            add_meet(scores, &latest.attempts, &chances, &past_misses);
+        }
+    }
 
     for lift in Lift::ALL {
         let slot_rates = fitted.stats.get(lift).make_rates.all();
@@ -360,6 +427,7 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet], backtest: &mut Backtest) {
 /// Scores the model fitted to `fitted` on the held-out lifters among `entries`.
 pub fn backtest(fitted: &Fitted, entries: &[Entry]) -> Backtest {
     let lifters = lifters_meets(entries);
+    let models = [fitted.model(), fitted.kinds_model()];
     let threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     // Lifters take very different times, so each thread takes the next one when free.
     let next = AtomicUsize::new(0);
@@ -369,7 +437,7 @@ pub fn backtest(fitted: &Fitted, entries: &[Entry]) -> Backtest {
                 scope.spawn(|| {
                     let mut backtest = Backtest::default();
                     while let Some(meets) = lifters.get(next.fetch_add(1, Ordering::Relaxed)) {
-                        score_lifter(fitted, meets, &mut backtest);
+                        score_lifter(fitted, &models, meets, &mut backtest);
                     }
                     backtest
                 })
@@ -443,7 +511,7 @@ mod tests {
 
     #[test]
     fn a_known_day_max_gives_each_attempt_its_own_chance() {
-        let curves = PerLift::from_fn(|_| CURVE);
+        let curves = PerLift::from_fn(|_| [(1.0, CURVE), (0.0, CURVE)]);
         let expected = PerLift::from_fn(|_| 100.0);
         let attempts = PerLift::from_fn(|_| [90.0, -100.0, 102.5]);
         let day_form = DayForm {
@@ -464,7 +532,7 @@ mod tests {
 
     #[test]
     fn a_miss_lowers_the_chances_of_lifts_that_share_the_day() {
-        let curves = PerLift::from_fn(|_| CURVE);
+        let curves = PerLift::from_fn(|_| [(1.0, CURVE), (0.0, CURVE)]);
         let expected = PerLift::from_fn(|_| 100.0);
         let bench_opener = |squat: [f64; 3], correlation| {
             let attempts = PerLift {

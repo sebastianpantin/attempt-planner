@@ -54,6 +54,10 @@ pub struct Params {
     pub steepness: f64,
     /// Chance of missing an attempt whatever the load.
     pub technical_miss_chance: f64,
+    /// Share of lifters prone to missing whatever the load, with a chance of
+    /// `prone_technical_miss_chance` instead. A lifter is prone or not for all their meets.
+    pub prone_share: f64,
+    pub prone_technical_miss_chance: f64,
     /// Standard deviation of the day max as a share of the expected max.
     pub spread: f64,
     /// The typical opener as a share of the expected max.
@@ -70,22 +74,59 @@ pub struct Calibration {
 
 const LIGHTEST_DAY: f64 = 0.01;
 
-/// Make rates for lifters with these parameters following the typical jumps, averaged
-/// over day form and over the paths the plan takes after makes and misses.
-pub fn predicted_make_rates(params: &Params, jumps: &Jumps) -> MakeRates {
-    // Chances of each event and of each conditioning event, summed over day form.
-    let mut opener = 0.0;
-    let [mut second_made_after_make, mut second_made_after_miss] = [0.0; 2];
-    let [mut third_made_after_make, mut third_made_after_miss] = [0.0; 2];
-    let [mut second_made, mut second_missed] = [0.0; 2];
+/// How often a lifter's opener is missed at a meet, split by whether they missed it at
+/// their meet before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpenerMisses {
+    pub after_miss: f64,
+    pub after_make: f64,
+}
+
+/// Chances of the events the make rates are made of, for one technical-miss chance.
+#[derive(Debug, Clone, Copy, Default)]
+struct Events {
+    opener: f64,
+    second_made_after_make: f64,
+    second_made_after_miss: f64,
+    third_made_after_make: f64,
+    third_made_after_miss: f64,
+    second_made: f64,
+    second_missed: f64,
+}
+
+impl Events {
+    fn add(&mut self, other: &Events, share: f64) {
+        self.opener += share * other.opener;
+        self.second_made_after_make += share * other.second_made_after_make;
+        self.second_made_after_miss += share * other.second_made_after_miss;
+        self.third_made_after_make += share * other.third_made_after_make;
+        self.third_made_after_miss += share * other.third_made_after_miss;
+        self.second_made += share * other.second_made;
+        self.second_missed += share * other.second_missed;
+    }
+
+    fn make_rates(&self) -> MakeRates {
+        MakeRates {
+            opener: self.opener,
+            second_after_make: self.second_made_after_make / self.opener,
+            second_after_miss: self.second_made_after_miss / (1.0 - self.opener),
+            third_after_make: self.third_made_after_make / self.second_made,
+            third_after_miss: self.third_made_after_miss / self.second_missed,
+        }
+    }
+}
+
+/// The event chances for lifters with this technical-miss chance following the typical
+/// jumps, averaged over day form and over the paths the plan takes.
+fn events(params: &Params, technical_miss_chance: f64, jumps: &Jumps) -> Events {
+    let mut events = Events::default();
     for (z, weight) in normal_draws() {
         let day = (1.0 + params.spread * z).max(LIGHTEST_DAY);
         let make = |load: f64| {
-            (1.0 - params.technical_miss_chance)
-                / (1.0 + (params.steepness * (load / day - 1.0)).exp())
+            (1.0 - technical_miss_chance) / (1.0 + (params.steepness * (load / day - 1.0)).exp())
         };
         let first = make(params.opener_ratio);
-        opener += weight * first;
+        events.opener += weight * first;
         for (opener_made, path, second_load) in [
             (true, first, params.opener_ratio * jumps.second_after_make),
             (
@@ -96,24 +137,54 @@ pub fn predicted_make_rates(params: &Params, jumps: &Jumps) -> MakeRates {
         ] {
             let second = make(second_load);
             if opener_made {
-                second_made_after_make += weight * path * second;
+                events.second_made_after_make += weight * path * second;
             } else {
-                second_made_after_miss += weight * path * second;
+                events.second_made_after_miss += weight * path * second;
             }
-            second_made += weight * path * second;
-            second_missed += weight * path * (1.0 - second);
-            third_made_after_make +=
+            events.second_made += weight * path * second;
+            events.second_missed += weight * path * (1.0 - second);
+            events.third_made_after_make +=
                 weight * path * second * make(second_load * jumps.third_after_make);
-            third_made_after_miss +=
+            events.third_made_after_miss +=
                 weight * path * (1.0 - second) * make(second_load * jumps.third_after_miss);
         }
     }
-    MakeRates {
-        opener,
-        second_after_make: second_made_after_make / opener,
-        second_after_miss: second_made_after_miss / (1.0 - opener),
-        third_after_make: third_made_after_make / second_made,
-        third_after_miss: third_made_after_miss / second_missed,
+    events
+}
+
+/// The two kinds of lifter, as shares and technical-miss chances.
+fn kinds(params: &Params) -> [(f64, f64); 2] {
+    [
+        (1.0 - params.prone_share, params.technical_miss_chance),
+        (params.prone_share, params.prone_technical_miss_chance),
+    ]
+}
+
+/// Make rates for lifters with these parameters following the typical jumps, averaged
+/// over day form, over the paths the plan takes after makes and misses, and over the
+/// kinds of lifter.
+pub fn predicted_make_rates(params: &Params, jumps: &Jumps) -> MakeRates {
+    let mut total = Events::default();
+    for (share, chance) in kinds(params) {
+        total.add(&events(params, chance, jumps), share);
+    }
+    total.make_rates()
+}
+
+/// How often openers are missed after a missed and after a made opener at the meet
+/// before, for lifters whose days at the two meets are independent: only being prone
+/// carries over.
+pub fn predicted_opener_misses(params: &Params, jumps: &Jumps) -> OpenerMisses {
+    let [mut missed, mut both_missed, mut made_then_missed] = [0.0; 3];
+    for (share, chance) in kinds(params) {
+        let miss = 1.0 - events(params, chance, jumps).opener;
+        missed += share * miss;
+        both_missed += share * miss * miss;
+        made_then_missed += share * (1.0 - miss) * miss;
+    }
+    OpenerMisses {
+        after_miss: both_missed / missed,
+        after_make: made_then_missed / (1.0 - missed),
     }
 }
 
@@ -127,6 +198,8 @@ pub fn calibrate_at_spread(observed: &MakeRates, jumps: &Jumps, spread: f64) -> 
     let params = |[log_steepness, root_chance, opener_ratio]: [f64; 3]| Params {
         steepness: log_steepness.exp(),
         technical_miss_chance: (root_chance * root_chance).min(0.99),
+        prone_share: 0.0,
+        prone_technical_miss_chance: 0.0,
         spread,
         opener_ratio,
     };
@@ -164,6 +237,78 @@ pub fn calibrate_lifts(lifts: &[(MakeRates, Jumps)]) -> Vec<Calibration> {
     at(log_spread)
 }
 
+/// Like [`calibrate_lifts`], also fitting a share of lifters prone to misses whatever the
+/// load, so that missed openers repeat at a lifter's next meet as often as `opener_misses`
+/// says.
+pub fn calibrate_kinds(lifts: &[(MakeRates, OpenerMisses, Jumps)]) -> Vec<Calibration> {
+    let at = |log_spread: f64| -> Vec<Calibration> {
+        lifts
+            .iter()
+            .map(|(observed, opener_misses, jumps)| {
+                calibrate_kinds_at_spread(observed, opener_misses, jumps, log_spread.exp())
+            })
+            .collect()
+    };
+    let total = |log_spread: f64| at(log_spread).iter().map(|c| c.error).sum::<f64>();
+    let [log_spread] = minimize(|[log_spread]| total(log_spread), [0.04_f64.ln()], [0.3]);
+    at(log_spread)
+}
+
+fn logistic(x: f64) -> f64 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+fn calibrate_kinds_at_spread(
+    observed: &MakeRates,
+    opener_misses: &OpenerMisses,
+    jumps: &Jumps,
+    spread: f64,
+) -> Calibration {
+    // Searched so every point is valid, with prone lifters missing more than the others.
+    let params = |[log_steepness, root_chance, share, prone]: [f64; 4], opener_ratio| {
+        let technical_miss_chance = (root_chance * root_chance).min(0.99);
+        Params {
+            steepness: log_steepness.exp(),
+            technical_miss_chance,
+            prone_share: logistic(share),
+            prone_technical_miss_chance: technical_miss_chance
+                + (1.0 - technical_miss_chance) * logistic(prone),
+            spread,
+            opener_ratio,
+        }
+    };
+    let error = |params: &Params| {
+        let predicted = predicted_opener_misses(params, jumps);
+        squared_error(&predicted_make_rates(params, jumps), observed)
+            + (predicted.after_miss - opener_misses.after_miss).powi(2)
+            + (predicted.after_make - opener_misses.after_make).powi(2)
+    };
+    let plain = calibrate_at_spread(observed, jumps, spread).params;
+    let start = |share: f64, prone: f64| {
+        [
+            plain.steepness.ln(),
+            plain.technical_miss_chance.sqrt(),
+            (share / (1.0 - share)).ln(),
+            (prone / (1.0 - prone)).ln(),
+            plain.opener_ratio,
+        ]
+    };
+    let cost = |[s, c, p, q, o]: [f64; 5]| error(&params([s, c, p, q], o));
+    let best = [0.05, 0.15, 0.3]
+        .into_iter()
+        .flat_map(|share| [0.1, 0.3].map(|prone| start(share, prone)))
+        .map(|start| minimize(cost, start, [0.3, 0.05, 0.5, 0.5, 0.02]))
+        .min_by(|a, b| cost(*a).total_cmp(&cost(*b)))
+        .expect("there are starting points");
+    let [s, c, p, q, o] = best;
+    let params = params([s, c, p, q], o);
+    Calibration {
+        predicted: predicted_make_rates(&params, jumps),
+        error: error(&params),
+        params,
+    }
+}
+
 fn squared_error(predicted: &MakeRates, observed: &MakeRates) -> f64 {
     let error: f64 = predicted
         .all()
@@ -194,6 +339,8 @@ mod tests {
         Params {
             steepness,
             technical_miss_chance,
+            prone_share: 0.0,
+            prone_technical_miss_chance: 0.0,
             spread,
             opener_ratio: 0.9,
         }
@@ -261,6 +408,37 @@ mod tests {
         );
         assert!((fit.params.opener_ratio - 0.9).abs() < 0.002, "{fit:?}");
         assert!(fit.error < 1e-8, "{fit:?}");
+    }
+
+    #[test]
+    fn calibration_recovers_the_share_of_prone_lifters_from_repeated_opener_misses() {
+        let truth = Params {
+            prone_share: 0.2,
+            prone_technical_miss_chance: 0.3,
+            ..lifter(50.0, 0.01, 0.04)
+        };
+        let observed = predicted_make_rates(&truth, &TYPICAL);
+        let opener_misses = predicted_opener_misses(&truth, &TYPICAL);
+        assert!(
+            opener_misses.after_miss > 2.0 * opener_misses.after_make,
+            "{opener_misses:?}"
+        );
+        let fit = calibrate_kinds_at_spread(&observed, &opener_misses, &TYPICAL, 0.04);
+        assert!((fit.params.prone_share - 0.2).abs() < 0.03, "{fit:?}");
+        assert!(
+            (fit.params.prone_technical_miss_chance - 0.3).abs() < 0.03,
+            "{fit:?}"
+        );
+        assert!(fit.error < 1e-7, "{fit:?}");
+    }
+
+    #[test]
+    fn without_prone_lifters_missed_openers_do_not_repeat_more_often() {
+        let misses = predicted_opener_misses(&lifter(50.0, 0.05, 0.04), &TYPICAL);
+        assert!(
+            (misses.after_miss - misses.after_make).abs() < 1e-12,
+            "{misses:?}"
+        );
     }
 
     #[test]

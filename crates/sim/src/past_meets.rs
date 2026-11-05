@@ -21,11 +21,11 @@ const LEAST_SHARED_UNCERTAINTY: f64 = 0.005;
 /// How fast a lifter is assumed to get stronger before the meets say otherwise: no change
 /// on average, give or take 10% a year.
 const YEARLY_PROGRESS_SPREAD: f64 = 0.1;
-const DAYS_PER_YEAR: f64 = 365.25;
+pub const DAYS_PER_YEAR: f64 = 365.25;
 /// How far past the latest meet the yearly rate is carried, about 6 months; after that the
 /// level is held flat. A trend fitted over a few meets says little about the years after
 /// them, and lifters plateau, detrain or get hurt.
-const MAX_TREND_DAYS: i32 = 183;
+pub const MAX_TREND_DAYS: i32 = 183;
 const LIGHTEST_DAY: f64 = 0.01;
 const PARAMETERS: usize = 4;
 const PROGRESS: usize = 3;
@@ -206,7 +206,7 @@ fn problems(input: &MaxEstimateInput) -> Vec<EstimateProblem> {
 }
 
 /// Chance of exactly these makes and misses, averaged over day form.
-fn chance_of_outcomes(
+pub fn chance_of_outcomes(
     curve: &MakeRateCurve,
     attempts: &[PastAttempt],
     level_kg: f64,
