@@ -16,6 +16,17 @@ pub struct AttemptStats {
     pub jumps: Jumps,
 }
 
+/// Whether every attempt was recorded and each jump is plausible, with missed attempts
+/// negative as OpenPowerlifting records them.
+pub fn is_complete(attempts: [f64; 3]) -> bool {
+    if !attempts.iter().all(|a| a.is_finite() && *a != 0.0) {
+        return false;
+    }
+    let [first_kg, second_kg, third_kg] = attempts.map(f64::abs);
+    PLAUSIBLE_JUMP.contains(&(second_kg / first_kg))
+        && PLAUSIBLE_JUMP.contains(&(third_kg / second_kg))
+}
+
 /// Summarises one lift's attempts, three per meet, with missed attempts negative as
 /// OpenPowerlifting records them. Skips meets with a missing or implausible attempt.
 /// `None` when some kind of jump never happens.
@@ -30,14 +41,11 @@ pub fn attempt_stats(meets: impl IntoIterator<Item = [f64; 3]>) -> Option<Attemp
     let mut second = [Vec::new(), Vec::new()];
     let mut third = [Vec::new(), Vec::new()];
     for attempts in meets {
-        if !attempts.iter().all(|a| a.is_finite() && *a != 0.0) {
+        if !is_complete(attempts) {
             continue;
         }
         let [first_kg, second_kg, third_kg] = attempts.map(f64::abs);
         let (to_second, to_third) = (second_kg / first_kg, third_kg / second_kg);
-        if !PLAUSIBLE_JUMP.contains(&to_second) || !PLAUSIBLE_JUMP.contains(&to_third) {
-            continue;
-        }
         let [first_made, second_made, third_made] = attempts.map(|a| usize::from(a > 0.0));
         count += 1;
         openers_made += first_made;

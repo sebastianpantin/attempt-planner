@@ -35,7 +35,7 @@ impl fmt::Display for Lift {
 }
 
 /// One value per lift, in meet order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
