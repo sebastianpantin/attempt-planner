@@ -12,12 +12,13 @@
 
 use std::num::NonZeroUsize;
 use std::ops::AddAssign;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::minimize::minimize_to;
 use attempt_sim::model::{DayForm, MakeRateCurve};
-use attempt_sim::normal::normal_draws;
+use attempt_sim::normal::normal_grid;
 use attempt_sim::past_meets::{
     DAYS_PER_YEAR, LiftEstimate, MAX_TREND_DAYS, MaxEstimate, MaxEstimateInput, PastAttempt,
     PastMeet, chance_of_outcomes, estimate_maxes,
@@ -26,6 +27,11 @@ use attempt_sim::past_meets::{
 use crate::data::Entry;
 use crate::fitted::{Fitted, Model};
 use crate::stats::is_complete;
+
+/// The grid of normal draws the chances are averaged over. Coarser than the planner's,
+/// which is plenty for curves as soft as the fitted ones and four times faster.
+static GRID: LazyLock<Vec<(f64, f64)>> = LazyLock::new(|| normal_grid(GRID_POINTS, 6.0));
+const GRID_POINTS: usize = 61;
 
 /// One lifter in this many is held out for scoring.
 const HELD_OUT_EVERY: u64 = 10;
@@ -254,15 +260,16 @@ fn slots(attempts: &[f64; 3]) -> [usize; 3] {
 /// The chance of making each attempt of a meet, in meet order, given every attempt before
 /// it. The day maxes are drawn as the planner draws them: a part shared by the lifts and a
 /// part of their own, each averaged over a grid of normal draws. Each lift's kind of
-/// lifter, as shares and curves, holds for all its attempts.
+/// lifter, as shares and curves, holds for all its attempts; the kinds differ only in
+/// their technical-miss chance.
 fn sequential_chances(
-    kinds: &PerLift<[(f64, MakeRateCurve); 2]>,
+    kinds_by_lift: &PerLift<[(f64, MakeRateCurve); 2]>,
     expected_kg: &PerLift<f64>,
     day_form: &DayForm,
     attempts: &PerLift<[f64; 3]>,
     choice: Option<&LoadChoice>,
 ) -> PerLift<[f64; 3]> {
-    let draws: Vec<(f64, f64)> = normal_draws().collect();
+    let draws = &*GRID;
     let weights = day_form.draw_weights();
     let n = draws.len();
     // For each lift, kind and shared draw: the chance of the lift's attempts so far for
@@ -277,19 +284,43 @@ fn sequential_chances(
     };
     for lift in Lift::ALL {
         let expected = *expected_kg.get(lift);
+        let days: Vec<f64> = draws
+            .iter()
+            .flat_map(|&(shared_z, _)| {
+                draws
+                    .iter()
+                    .map(move |&(own_z, _)| weights.day_max(expected, shared_z, own_z))
+            })
+            .collect();
+        let log_days: Vec<f64> = days.iter().map(|day| day.ln()).collect();
+        let kinds: Vec<(usize, f64, f64)> = kinds_by_lift
+            .get(lift)
+            .iter()
+            .enumerate()
+            .filter(|(_, (share, _))| *share > 0.0)
+            .map(|(kind, (share, curve))| (kind, *share, 1.0 - curve.technical_miss_chance))
+            .collect();
+        let [(_, curve), (_, other)] = *kinds_by_lift.get(lift);
+        debug_assert_eq!(
+            (curve.steepness, curve.ratio_at_half),
+            (other.steepness, other.ratio_at_half)
+        );
+        let strength = MakeRateCurve {
+            technical_miss_chance: 0.0,
+            ..curve
+        };
         let slots = slots(attempts.get(lift));
         for (attempt, &kg) in attempts.get(lift).iter().enumerate() {
             let (load, made) = (kg.abs(), kg > 0.0);
             if let Some(choice) = choice.filter(|_| attempt > 0) {
-                let log_share = choice.log_shares[slots[attempt] - 1];
+                let log_share = load.ln() - choice.log_shares[slots[attempt] - 1];
                 so_far = 0.0;
-                for (i, &(shared_z, shared_weight)) in draws.iter().enumerate() {
+                for (i, &(_, shared_weight)) in draws.iter().enumerate() {
                     let mut average = 0.0;
-                    for (j, &(own_z, own_weight)) in draws.iter().enumerate() {
-                        let day = weights.day_max(expected, shared_z, own_z);
-                        let gap = ((load / day).ln() - log_share) / choice.spread;
+                    for (j, &(_, own_weight)) in draws.iter().enumerate() {
+                        let gap = (log_share - log_days[i * n + j]) / choice.spread;
                         let likelihood = (-gap * gap / 2.0).exp();
-                        for (kind, (share, _)) in kinds.get(lift).iter().enumerate() {
+                        for &(kind, share, _) in &kinds {
                             let chance = &mut chances.get_mut(lift)[(kind * n + i) * n + j];
                             *chance *= likelihood;
                             average += share * own_weight * *chance;
@@ -301,14 +332,13 @@ fn sequential_chances(
                 }
             }
             let mut chance_made = 0.0;
-            for (i, &(shared_z, shared_weight)) in draws.iter().enumerate() {
+            for (i, &(_, shared_weight)) in draws.iter().enumerate() {
                 let mut average_made = 0.0;
-                for (kind, (share, curve)) in kinds.get(lift).iter().enumerate() {
-                    let start = (kind * n + i) * n;
-                    let row = &mut chances.get_mut(lift)[start..start + n];
-                    for (chance, &(own_z, own_weight)) in row.iter_mut().zip(&draws) {
-                        let day = weights.day_max(expected, shared_z, own_z);
-                        let make = curve.make_probability_kg(load, day);
+                for (j, &(_, own_weight)) in draws.iter().enumerate() {
+                    let strong = strength.make_probability_kg(load, days[i * n + j]);
+                    for &(kind, share, no_technical_miss) in &kinds {
+                        let chance = &mut chances.get_mut(lift)[(kind * n + i) * n + j];
+                        let make = no_technical_miss * strong;
                         average_made += share * own_weight * *chance * make;
                         *chance *= if made { make } else { 1.0 - make };
                     }
@@ -434,7 +464,8 @@ const CHOICE_LIFTERS: usize = 2_000;
 
 /// The [`LoadChoice`] under which `model`'s chances of the latest meets of some of
 /// `entries`' lifters, with maxes from past meets and the opener, have the lowest log loss.
-pub fn fit_load_choice(model: &Model, entries: &[Entry]) -> LoadChoice {
+/// The search starts from `start`, or from typical jumps without one.
+pub fn fit_load_choice(model: &Model, entries: &[Entry], start: Option<&LoadChoice>) -> LoadChoice {
     let lifters = lifters_meets(entries);
     let step = lifters.len().div_ceil(CHOICE_LIFTERS).max(1);
     let meets: Vec<_> = lifters
@@ -471,13 +502,10 @@ pub fn fit_load_choice(model: &Model, entries: &[Entry]) -> LoadChoice {
         })
         .log_loss()
     };
-    let start = [
-        0.95f64.ln(),
-        0.9f64.ln(),
-        0.99f64.ln(),
-        0.95f64.ln(),
-        0.04f64.ln(),
-    ];
+    let start = start.map_or([0.95, 0.9, 0.99, 0.95, 0.04].map(f64::ln), |choice| {
+        let [a, b, c, d] = choice.log_shares;
+        [a, b, c, d, choice.spread.ln()]
+    });
     choice(minimize_to(
         log_loss,
         start,
@@ -592,8 +620,11 @@ fn score_lifter(
 /// Scores the models fitted to `fitted` on the held-out lifters among `held_out`, with
 /// the load choice fitted to some of the lifters in `fitted_to`.
 pub fn backtest(fitted: &Fitted, fitted_to: &[Entry], held_out: &[Entry]) -> Backtest {
-    let models = [fitted.model(), fitted.kinds_model()]
-        .map(|model| (model, fit_load_choice(&model, fitted_to)));
+    let alike = fitted.model();
+    let alike_choice = fit_load_choice(&alike, fitted_to, None);
+    let prone = fitted.kinds_model();
+    let prone_choice = fit_load_choice(&prone, fitted_to, Some(&alike_choice));
+    let models = [(alike, alike_choice), (prone, prone_choice)];
     let lifters = lifters_meets(held_out);
     let mut backtest = in_parallel(&lifters, |meets| {
         let mut backtest = Backtest::default();

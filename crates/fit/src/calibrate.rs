@@ -14,7 +14,7 @@
 //! after a miss tells the two kinds of miss apart: after a technical miss the repeat is
 //! usually made, after a strength miss on a bad day it usually is not.
 
-use attempt_sim::minimize::minimize;
+use attempt_sim::minimize::{minimize, minimize_to};
 use attempt_sim::normal::normal_draws;
 
 /// Each later attempt as a multiple of the attempt before it.
@@ -241,18 +241,36 @@ pub fn calibrate_lifts(lifts: &[(MakeRates, Jumps)]) -> Vec<Calibration> {
 /// load, so that missed openers repeat at a lifter's next meet as often as `opener_misses`
 /// says.
 pub fn calibrate_kinds(lifts: &[(MakeRates, OpenerMisses, Jumps)]) -> Vec<Calibration> {
+    // The lifts are fitted on threads of their own: each takes several searches.
     let at = |log_spread: f64| -> Vec<Calibration> {
-        lifts
-            .iter()
-            .map(|(observed, opener_misses, jumps)| {
-                calibrate_kinds_at_spread(observed, opener_misses, jumps, log_spread.exp())
-            })
-            .collect()
+        std::thread::scope(|scope| {
+            let fits: Vec<_> = lifts
+                .iter()
+                .map(|(observed, opener_misses, jumps)| {
+                    scope.spawn(move || {
+                        calibrate_kinds_at_spread(observed, opener_misses, jumps, log_spread.exp())
+                    })
+                })
+                .collect();
+            fits.into_iter()
+                .map(|fit| fit.join().expect("a calibration thread panicked"))
+                .collect()
+        })
     };
     let total = |log_spread: f64| at(log_spread).iter().map(|c| c.error).sum::<f64>();
-    let [log_spread] = minimize(|[log_spread]| total(log_spread), [0.04_f64.ln()], [0.3]);
+    let [log_spread] = minimize_to(
+        |[log_spread]| total(log_spread),
+        [0.04_f64.ln()],
+        [0.3],
+        KINDS_TOLERANCE,
+        5_000,
+    );
     at(log_spread)
 }
+
+/// Far finer than the data can tell apart, and much quicker than the plain fit's
+/// tolerance for the larger search.
+const KINDS_TOLERANCE: f64 = 1e-9;
 
 fn logistic(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
@@ -294,12 +312,28 @@ fn calibrate_kinds_at_spread(
         ]
     };
     let cost = |[s, c, p, q, o]: [f64; 5]| error(&params([s, c, p, q], o));
-    let best = [0.05, 0.15, 0.3]
-        .into_iter()
-        .flat_map(|share| [0.1, 0.3].map(|prone| start(share, prone)))
-        .map(|start| minimize(cost, start, [0.3, 0.05, 0.5, 0.5, 0.02]))
-        .min_by(|a, b| cost(*a).total_cmp(&cost(*b)))
-        .expect("there are starting points");
+    let best = std::thread::scope(|scope| {
+        let searches: Vec<_> = [0.05, 0.15, 0.3]
+            .into_iter()
+            .flat_map(|share| [0.1, 0.3].map(|prone| start(share, prone)))
+            .map(|start| {
+                scope.spawn(move || {
+                    minimize_to(
+                        cost,
+                        start,
+                        [0.3, 0.05, 0.5, 0.5, 0.02],
+                        KINDS_TOLERANCE,
+                        5_000,
+                    )
+                })
+            })
+            .collect();
+        searches
+            .into_iter()
+            .map(|search| search.join().expect("a calibration thread panicked"))
+            .min_by(|a, b| cost(*a).total_cmp(&cost(*b)))
+            .expect("there are starting points")
+    });
     let [s, c, p, q, o] = best;
     let params = params([s, c, p, q], o);
     Calibration {
