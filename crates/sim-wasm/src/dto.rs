@@ -270,7 +270,6 @@ pub fn start_search(request: &SearchRequest) -> Result<Search, Vec<Problem>> {
         .map_err(|problems| problems.into_iter().map(Problem::from).collect())
 }
 
-/// How a set of plans does on the simulated meets.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanOutcome {
@@ -299,7 +298,6 @@ impl PlanOutcome {
 pub struct Change {
     pub lift: Lift,
     pub setting: Setting,
-    /// The setting's new weight.
     pub weight_kg: f64,
     pub result: PlanOutcome,
     /// Whether the change ranks above the current plans, as the search ranks plans.

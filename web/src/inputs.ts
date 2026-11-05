@@ -146,7 +146,6 @@ export function buildRequest(
 /** A key that is the same for two tradeoff requests exactly when they ask for the same sweep. */
 export const sweepKey = (request: TradeoffRequest) => JSON.stringify(request);
 
-/** A tradeoff sweep and the request it answered. */
 export interface Swept {
   sweep: Extract<TradeoffResponse, { kind: "swept" }>;
   request: TradeoffRequest;

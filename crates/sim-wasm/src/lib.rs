@@ -54,8 +54,8 @@ pub struct PlanSearch(attempt_sim::search::Search);
 
 #[wasm_bindgen]
 impl PlanSearch {
-    /// Sets up a search. Throws when the input has the wrong shape or any problem, with
-    /// every problem's message.
+    /// Throws when the input has the wrong shape or any problem, with every problem's
+    /// message.
     #[wasm_bindgen(constructor)]
     pub fn new(request: Ts<dto::SearchRequest>) -> Result<PlanSearch, JsError> {
         dto::start_search(&request.to_rust()?)

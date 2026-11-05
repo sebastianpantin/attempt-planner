@@ -64,7 +64,6 @@ export function histogram(totals: TotalShare[], goalKg?: number): Histogram {
   return { bombOutShare, bins };
 }
 
-/** The bin most totals land in. */
 export const tallestBin = (bins: Bin[]) =>
   bins.reduce<Bin | undefined>(
     (tallest, bin) => (!tallest || bin.share > tallest.share ? bin : tallest),
@@ -95,7 +94,6 @@ export interface ChancePoint {
   chance: number;
 }
 
-/** Chance of a total at or above `totalKg`. */
 export const chanceOfAtLeast = (totals: TotalShare[], totalKg: number) =>
   totals
     .filter((total) => total.totalKg >= totalKg)

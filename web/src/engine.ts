@@ -17,7 +17,6 @@ import {
 
 export type Failed = { kind: "failed"; message: string };
 
-/** The request and response of each kind of job the worker runs. */
 export interface Jobs {
   evaluate: { request: EvaluateRequest; response: EvaluateResponse };
   tradeoff: { request: TradeoffRequest; response: TradeoffResponse };

@@ -370,7 +370,6 @@ impl MeetDays {
         Err(problems)
     }
 
-    /// The lifter the days were simulated for.
     pub fn lifter(&self) -> &Lifter {
         &self.lifter
     }
@@ -379,7 +378,6 @@ impl MeetDays {
         &self.lifts
     }
 
-    /// How many days there are.
     pub(crate) fn len(&self) -> usize {
         self.simulations as usize
     }

@@ -229,7 +229,7 @@ const bombOutCapSlider = input("bombOutCapPercent");
 bombOutCapSlider.max = String(BOMB_OUT_CAPS.length - 1);
 const noBombOutCap = input("noBombOutCap");
 
-/** Sets an input; the cap slider takes the position of the cap. */
+/** The cap slider takes the position of the cap. */
 function setInput(name: InputName, value: number) {
   input(name).valueAsNumber =
     name === "bombOutCapPercent" ? sliderPosition(value) : value;
@@ -427,7 +427,6 @@ const status = (id: string, text: string) => {
   byId(id).textContent = text;
 };
 
-/** The evaluation shown, with the goal and plans it was simulated for. */
 let shown:
   | (Pick<EvaluateRequest, "goalKg" | "plans"> & { evaluation: Evaluation })
   | undefined;

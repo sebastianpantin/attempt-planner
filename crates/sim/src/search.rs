@@ -262,7 +262,6 @@ pub struct ChangeInput {
 pub struct Change {
     pub lift: Lift,
     pub setting: Setting,
-    /// The setting's new weight.
     pub weight: Weight,
     pub found: Found,
     /// Whether the change ranks above the plans as given, as the search ranks plans.
@@ -337,7 +336,6 @@ pub fn single_changes(input: &ChangeInput) -> Result<Changes, Vec<InputProblem>>
     Ok(Changes { current, changes })
 }
 
-/// Whether `a` ranks above `b` as the search ranks plans.
 pub(crate) fn ranks_higher(bomb_out_cap: Option<f64>, a: &Outcome, b: &Outcome) -> bool {
     rank(bomb_out_cap, a) > rank(bomb_out_cap, b)
 }
@@ -375,7 +373,6 @@ fn fallback_plan() -> LiftPlan {
     }
 }
 
-/// Runs a search to the end and returns the best plans found.
 pub fn search(input: &SearchInput) -> Result<Found, Vec<InputProblem>> {
     let mut search = Search::new(input)?;
     while !search.is_done() {

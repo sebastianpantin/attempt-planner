@@ -49,7 +49,6 @@ pub struct Filter<'a> {
     pub sex: Option<&'a str>,
 }
 
-/// Every raw full-power entry that passes `filter`.
 pub fn raw_full_power_entries(
     csv: impl Read,
     filter: Filter,
