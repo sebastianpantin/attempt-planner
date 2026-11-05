@@ -15,7 +15,7 @@ use crate::model::{DayForm, MakeRateCurve};
 use crate::normal::normal_draws;
 
 /// How far a lifter's opener usually strays from the typical share of their max.
-const OPENER_SPREAD: f64 = 0.05;
+pub const OPENER_SPREAD: f64 = 0.05;
 /// How fast a lifter is assumed to get stronger before the meets say otherwise: no change
 /// on average, give or take 10% a year.
 const YEARLY_PROGRESS_SPREAD: f64 = 0.1;
@@ -259,9 +259,10 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
     let level_day = input.on_day.min(latest_day.saturating_add(MAX_TREND_DAYS));
     let years_before = |meet: &PastMeet| f64::from(level_day - meet.day) / DAYS_PER_YEAR;
     let cost = |x: [f64; PARAMETERS]| {
-        // Without a trend the progress parameter only meets its prior, which keeps it at 0.
+        // Without a trend the progress parameter only meets its prior, which keeps it at 0
+        // and its second derivative positive, so the covariance can still be found.
+        let mut cost = (x[PROGRESS] / YEARLY_PROGRESS_SPREAD).powi(2) / 2.0;
         let progress = if fits_trend { x[PROGRESS] } else { 0.0 };
-        let mut cost = (progress / YEARLY_PROGRESS_SPREAD).powi(2) / 2.0;
         for lift in Lift::ALL {
             let index = lift as usize;
             if *heaviest.get(lift) == 0.0 {
@@ -442,6 +443,8 @@ mod tests {
             estimate.lifts.squat.unwrap().expected_max_kg,
             on_the_day.lifts.squat.unwrap().expected_max_kg
         );
+        let uncertainty = on_the_day.lifts.squat.unwrap().uncertainty;
+        assert!(uncertainty > 0.0 && uncertainty < 0.1, "{uncertainty}");
     }
 
     #[test]
