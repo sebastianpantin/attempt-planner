@@ -82,17 +82,25 @@ It takes a few seconds. This uses data from the OpenPowerlifting project, https:
 cargo run --release -p attempt-fit -- --federation IPF --backtest path/to/openpowerlifting.csv
 ```
 
-Lower log loss is better. On IPF meets up to October 2026 (9,044 lifters, 81,396 attempts, 78% made):
+It takes about two minutes. Lower log loss is better. On IPF meets up to October 2026 (9,044 lifters, 81,396 attempts, 78% made):
 
 | Chance of each attempt from | Mean predicted | Log loss |
 | --- | --- | --- |
 | The share of that attempt made, after a make or a miss, whatever the load | 78% | 0.447 |
-| The model, with maxes from past meets | 69% | 0.702 |
+| The model, with maxes from past meets | 69% | 0.700 |
 | The model, with maxes from past meets and the opener the lifter chose | 73% | 0.577 |
+| As above, with a share of lifters prone to misses whatever the load | 73% | 0.565 |
+| As above, each lifter's share updated by their past misses | 73% | 0.564 |
+| The model, with the opener, and the 2nd and 3rd attempts the lifter chose | 78% | 0.497 |
+| As above, with a share of prone lifters | 78% | 0.498 |
 
-The model does worse than ignoring the load. It is too pessimistic: attempts it gives under 50% are made 59–63% of the time. Lifters choose their attempts knowing how training went, and taking their opener as evidence of their max helps, but not enough. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 49–61%, but lifters make it 73–76% of the time. Most misses are not about the day max.
+With maxes from past meets, even with the opener, the model is too pessimistic: attempts it gives under 50% are made 58–63% of the time. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 49–61%, but lifters make it 73–76% of the time.
 
-The misses also run in lifters. Lifters who missed two or more attempts at a lift in their past meets make 8–11 points fewer, against the model's chance, than lifters who missed none. The model gives every lifter the same technical-miss chance, so it can't tell them apart.
+Misses do run in lifters. A lifter who missed their opener misses the next meet's opener more often: 13.7% against 8.7% on the squat, 9.2% against 5.9% on the bench and 7.7% against 3.9% on the deadlift. Fitting a share of lifters prone to misses whatever the load to that fixes the squat opener (90.6% predicted against 88.9% made, from 98%), but it gains little in the backtest. The fit puts every repeated miss down to being prone, though other habits repeat too, such as always opening heavy, so it likely overstates the share.
+
+Most of the gap is that lifters choose their 2nd and 3rd attempts knowing how the day is going. Taking each chosen attempt as evidence of the day max, as a typical share of it give or take a spread fitted to the other lifters, brings the predictions in line with what lifters make. Lifters take their 2nd attempt at about 97% of that day's max and their 3rd at 97% after a make and 102% after a miss, give or take only 2%. With that, a share of miss-prone lifters no longer helps. What is left is overconfidence at both ends: attempts given 98% or more are made 95% of the time.
+
+So the curve and day form hold up for a plan made before the meet. The lesson for the meet itself is that how an attempt moves says a lot about the day.
 
 The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 

@@ -5,13 +5,17 @@ use std::sync::LazyLock;
 const DRAWS: usize = 121;
 const DRAW_RANGE: f64 = 6.0;
 
-static DRAW_TABLE: LazyLock<[(f64, f64); DRAWS]> = LazyLock::new(|| {
-    let width = 2.0 * DRAW_RANGE / (DRAWS - 1) as f64;
-    let points: [f64; DRAWS] = std::array::from_fn(|i| -DRAW_RANGE + i as f64 * width);
+static DRAW_TABLE: LazyLock<Vec<(f64, f64)>> = LazyLock::new(|| normal_grid(DRAWS, DRAW_RANGE));
+
+/// `count` evenly spaced points from `-range` to `range` with weights that average a
+/// function over a standard normal draw.
+pub fn normal_grid(count: usize, range: f64) -> Vec<(f64, f64)> {
+    let width = 2.0 * range / (count - 1) as f64;
+    let points = (0..count).map(|i| -range + i as f64 * width);
     let density = |z: f64| (-z * z / 2.0).exp();
-    let total: f64 = points.iter().copied().map(density).sum();
-    points.map(|z| (z, density(z) / total))
-});
+    let total: f64 = points.clone().map(density).sum();
+    points.map(|z| (z, density(z) / total)).collect()
+}
 
 /// Evenly spaced points from −6 to 6 with weights that average a function over a standard
 /// normal draw, worked out once.

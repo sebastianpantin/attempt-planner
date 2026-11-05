@@ -272,6 +272,60 @@ fn hessian<const N: usize>(f: impl Fn([f64; N]) -> f64, x: [f64; N]) -> [[f64; N
     })
 }
 
+/// The day the level is fitted on: the day the trend stops, after which it is held flat.
+/// And whether the meets fall on more than one day, so a trend can be fitted.
+fn level_day(input: &MaxEstimateInput) -> (i32, bool) {
+    let meet_days = || {
+        input
+            .meets
+            .iter()
+            .filter(|meet| {
+                Lift::ALL
+                    .iter()
+                    .any(|&lift| !meet.attempts.get(lift).is_empty())
+            })
+            .map(|meet| meet.day)
+    };
+    let latest_day = meet_days().max().unwrap_or(input.on_day);
+    let fits_trend = meet_days().any(|day| day != latest_day);
+    (
+        input.on_day.min(latest_day.saturating_add(MAX_TREND_DAYS)),
+        fits_trend,
+    )
+}
+
+/// The log of the chance of a lift's makes and misses at the past meets of `input`, for a
+/// lifter with this curve whose level follows `estimate`: for example to compare kinds of
+/// lifter. `None` when the lift has no estimate.
+pub fn log_chance_of_past_meets(
+    input: &MaxEstimateInput,
+    estimate: &MaxEstimate,
+    lift: Lift,
+    curve: &MakeRateCurve,
+) -> Option<f64> {
+    let expected_kg = estimate.lifts.get(lift).as_ref()?.expected_max_kg;
+    let (level_day, _) = level_day(input);
+    let growth = (1.0 + estimate.yearly_progress).ln();
+    Some(
+        input
+            .meets
+            .iter()
+            .filter(|meet| !meet.attempts.get(lift).is_empty())
+            .map(|meet| {
+                let years = f64::from(level_day - meet.day) / DAYS_PER_YEAR;
+                let level_kg = expected_kg * (-growth * years).exp();
+                let chance = chance_of_outcomes(
+                    curve,
+                    meet.attempts.get(lift),
+                    level_kg,
+                    input.day_form_spread,
+                );
+                chance.max(f64::MIN_POSITIVE).ln()
+            })
+            .sum(),
+    )
+}
+
 /// The expected maxes on `on_day` that best explain the past meets, with how sure the
 /// estimate is.
 pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<EstimateProblem>> {
@@ -293,21 +347,7 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
                     .fold(kg, f64::max)
             })
         });
-    let meet_days = || {
-        input
-            .meets
-            .iter()
-            .filter(|meet| {
-                Lift::ALL
-                    .iter()
-                    .any(|&lift| !meet.attempts.get(lift).is_empty())
-            })
-            .map(|meet| meet.day)
-    };
-    let latest_day = meet_days().max().unwrap_or(input.on_day);
-    let fits_trend = meet_days().any(|day| day != latest_day);
-    // The level is fitted on the day the trend stops and held flat from there.
-    let level_day = input.on_day.min(latest_day.saturating_add(MAX_TREND_DAYS));
+    let (level_day, fits_trend) = level_day(input);
     let years_before = |meet: &PastMeet| f64::from(level_day - meet.day) / DAYS_PER_YEAR;
     let cost = |x: [f64; PARAMETERS]| {
         // Without a trend the progress parameter only meets its prior, which keeps it at 0
@@ -531,6 +571,22 @@ mod tests {
             ..estimate
         };
         assert!((sure.with_opener(99.0, 0.9).expected_max_kg - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn past_meets_are_likelier_for_the_curve_they_were_drawn_from() {
+        let meets = simulated_meets(levels(), 0.0, 6);
+        let input = input(meets, 700);
+        let estimate = estimate_maxes(&input).unwrap();
+        let log_chance = |technical_miss_chance| {
+            let curve = MakeRateCurve {
+                technical_miss_chance,
+                ..*input.curves.get(Lift::Bench)
+            };
+            log_chance_of_past_meets(&input, &estimate, Lift::Bench, &curve).unwrap()
+        };
+        let drawn = input.curves.bench.technical_miss_chance;
+        assert!(log_chance(drawn) > log_chance(0.5), "{}", log_chance(drawn));
     }
 
     #[test]
