@@ -267,13 +267,13 @@ impl Meet {
 
 /// Each lifter's complete meets in date order, one per day, for lifters with two or more.
 fn lifters_meets(entries: &[Entry]) -> Vec<Vec<Meet>> {
-    let complete: Vec<(&str, Meet)> = by_lifter_and_day(entries)
+    let complete = entries.iter().filter(|entry| {
+        Lift::ALL
+            .iter()
+            .all(|&lift| is_complete(*entry.attempts.get(lift)))
+    });
+    let complete: Vec<(&str, Meet)> = by_lifter_and_day(complete)
         .into_iter()
-        .filter(|(_, _, entry)| {
-            Lift::ALL
-                .iter()
-                .all(|&lift| is_complete(*entry.attempts.get(lift)))
-        })
         .map(|(lifter, day, entry)| {
             let attempts = entry.attempts;
             (lifter, Meet { day, attempts })

@@ -112,9 +112,11 @@ pub fn raw_full_power_entries(
 
 /// The entries with a date, by lifter and then date, keeping one entry per lifter and day:
 /// the first, when one meet lists a lifter in two divisions.
-pub fn by_lifter_and_day(entries: &[Entry]) -> Vec<(&str, i32, &Entry)> {
+pub fn by_lifter_and_day<'a>(
+    entries: impl IntoIterator<Item = &'a Entry>,
+) -> Vec<(&'a str, i32, &'a Entry)> {
     let mut ordered: Vec<(&str, i32, &Entry)> = entries
-        .iter()
+        .into_iter()
         .filter_map(|entry| Some((entry.lifter.as_str(), entry.day?, entry)))
         .collect();
     ordered.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));

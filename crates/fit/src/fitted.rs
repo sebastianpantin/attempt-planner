@@ -34,7 +34,8 @@ pub fn fit(entries: &[Entry]) -> Result<Fitted, String> {
     });
     let calibrations = calibrate_lifts(&lifts);
     let history = meet_to_meet(entries).ok_or("no lifter has two meets to compare")?;
-    let opener_misses = opener_misses(entries);
+    let opener_misses = opener_misses(entries)
+        .ok_or("too few lifters missed and made openers at consecutive meets")?;
     let kinds = calibrate_kinds(&Lift::ALL.map(|lift| {
         let stats = stats.get(lift);
         (stats.make_rates, *opener_misses.get(lift), stats.jumps)
