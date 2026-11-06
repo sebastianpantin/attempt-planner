@@ -1,11 +1,11 @@
 //! Estimates a lifter's expected maxes from the attempts they took at past meets.
 //!
-//! Each meet's day max is the lifter's level on that date moved by day form, and the
-//! level grows by a steady yearly rate. The estimate is the level, today, and rate that
+//! Each meet's day max is the lifter's level on that date moved by day form. The level
+//! grows from meet to meet as lifters' levels typically do (see [`PROGRESS`]), plus a
+//! yearly gain of the lifter's own. The estimate is the level today and the own gain that
 //! best explain which attempts were made and missed, given the make-rate curves. Openers
 //! also count as evidence: lifters tend to open at a typical share of their max, which
-//! keeps the estimate finite for a lifter who never misses. The rate is only fitted when
-//! the meets fall on at least two days, and only carried a short way past the last meet.
+//! keeps the estimate finite for a lifter who never misses.
 
 use std::fmt;
 
@@ -18,17 +18,93 @@ use crate::normal::normal_draws;
 const OPENER_SPREAD: f64 = 0.05;
 /// The page never sets the uncertainty of the expected max below this.
 const LEAST_SHARED_UNCERTAINTY: f64 = 0.005;
-/// How fast a lifter is assumed to get stronger before the meets say otherwise: no change
-/// on average, give or take 10% a year.
-const YEARLY_PROGRESS_SPREAD: f64 = 0.1;
-const DAYS_PER_YEAR: f64 = 365.25;
-/// How far past the latest meet the yearly rate is carried, about 6 months; after that the
-/// level is held flat. A trend fitted over a few meets says little about the years after
-/// them, and lifters plateau, detrain or get hurt.
-const MAX_TREND_DAYS: i32 = 183;
+pub const DAYS_PER_YEAR: f64 = 365.25;
+
+/// Years from one day to another, both in days since 1970-01-01.
+pub fn years_between(from_day: i32, to_day: i32) -> f64 {
+    f64::from(to_day - from_day) / DAYS_PER_YEAR
+}
 const LIGHTEST_DAY: f64 = 0.01;
 const PARAMETERS: usize = 4;
-const PROGRESS: usize = 3;
+const OWN_GAIN: usize = 3;
+/// Lifters are told apart by meets done, 1 to 5 and then 6 or more.
+pub const EXPERIENCE_GROUPS: usize = 6;
+
+/// How much stronger a lifter gets after a meet, as a log ratio.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Step {
+    /// At the next meet, whenever it comes.
+    pub at_next_meet: f64,
+    /// For each year until then.
+    pub per_year: f64,
+}
+
+/// How much stronger lifters get from one meet to the next before their own meets say
+/// otherwise.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Progress {
+    /// By meets done, see [`EXPERIENCE_GROUPS`].
+    pub steps: [Step; EXPERIENCE_GROUPS],
+    /// Years between two meets after which the yearly gain stops: lifters plateau, detrain
+    /// or get hurt.
+    pub most_years: f64,
+    /// Standard deviation of a lifter's own yearly gain around the typical one.
+    pub yearly_spread: f64,
+}
+
+impl Progress {
+    /// The step after `meets_done` meets.
+    pub fn step(&self, meets_done: usize) -> Step {
+        self.steps[meets_done.clamp(1, EXPERIENCE_GROUPS) - 1]
+    }
+
+    /// The years of yearly gain counted in `years` between two meets.
+    pub fn counted_years(&self, years: f64) -> f64 {
+        years.min(self.most_years)
+    }
+
+    /// How much stronger, as a log ratio, a lifter who gains `own_gain` a year more than
+    /// typical is at the meet after their `meets_done`th, `years` later.
+    pub fn at_next_meet(&self, meets_done: usize, years: f64, own_gain: f64) -> f64 {
+        let step = self.step(meets_done);
+        step.at_next_meet + (step.per_year + own_gain) * self.counted_years(years)
+    }
+}
+
+/// Measured by the fit crate from lifters' consecutive complete meets in IPF federations:
+/// the next meet's best lifts against the last's. A new lifter is 3% stronger at their
+/// next meet even a month later, as they learn to compete, and 5% more for each year
+/// between; after six meets the step is about 1% and the yearly gain is gone.
+pub const PROGRESS: Progress = Progress {
+    steps: [
+        Step {
+            at_next_meet: 0.0314,
+            per_year: 0.048,
+        },
+        Step {
+            at_next_meet: 0.0207,
+            per_year: 0.0304,
+        },
+        Step {
+            at_next_meet: 0.0179,
+            per_year: 0.019,
+        },
+        Step {
+            at_next_meet: 0.0161,
+            per_year: 0.011,
+        },
+        Step {
+            at_next_meet: 0.016,
+            per_year: 0.0028,
+        },
+        Step {
+            at_next_meet: 0.0122,
+            per_year: -0.0068,
+        },
+    ],
+    most_years: 1.16,
+    yearly_spread: 0.078,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -64,6 +140,10 @@ pub struct MaxEstimateInput {
     pub meets: Vec<PastMeet>,
     /// The day to estimate the maxes for, in days since 1970-01-01.
     pub on_day: i32,
+    /// Meets the lifter did before the ones in `meets`, as typical progress slows with
+    /// meets done. 0 when absent: `meets` are all the lifter's meets.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub meets_before: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,8 +166,8 @@ pub struct LiftEstimate {
 pub struct MaxEstimate {
     /// `None` for a lift with no attempts.
     pub lifts: PerLift<Option<LiftEstimate>>,
-    /// How much stronger the lifter gets in a year, as a fraction, shared by all lifts. 0
-    /// when the meets fall on fewer than two days, which cannot show a trend.
+    /// How much stronger the lifter gets in a year now, as a fraction, shared by all lifts:
+    /// the typical gain after as many meets, and the lifter's own.
     pub yearly_progress: f64,
     /// One uncertainty of the expected max for every lift, as the planner takes it: the
     /// average over the estimated lifts, and at least 0.5%.
@@ -272,11 +352,22 @@ fn hessian<const N: usize>(f: impl Fn([f64; N]) -> f64, x: [f64; N]) -> [[f64; N
     })
 }
 
-/// The day the level is fitted on: the day the trend stops, after which it is held flat.
-/// And whether the meets fall on more than one day, so a trend can be fitted.
-fn level_day(input: &MaxEstimateInput) -> (i32, bool) {
-    let meet_days = || {
-        input
+/// How much stronger the lifter is on `on_day` than at each past meet, as a log ratio:
+/// `fixed + own_gain * years`, where `own_gain` is how much faster than typical the lifter
+/// gets stronger each year. Each meet day adds its step, and `on_day` too when it comes
+/// after every meet.
+struct GainsSince {
+    /// For each of the input's meets, in its order.
+    fixed: Vec<f64>,
+    years: Vec<f64>,
+    /// Including the meets before the input's.
+    meets_done: usize,
+}
+
+impl GainsSince {
+    /// `input` needs a meet with an attempt, as [`problems`] checks.
+    fn new(progress: &Progress, input: &MaxEstimateInput) -> Self {
+        let mut days: Vec<i32> = input
             .meets
             .iter()
             .filter(|meet| {
@@ -285,13 +376,56 @@ fn level_day(input: &MaxEstimateInput) -> (i32, bool) {
                     .any(|&lift| !meet.attempts.get(lift).is_empty())
             })
             .map(|meet| meet.day)
-    };
-    let latest_day = meet_days().max().unwrap_or(input.on_day);
-    let fits_trend = meet_days().any(|day| day != latest_day);
-    (
-        input.on_day.min(latest_day.saturating_add(MAX_TREND_DAYS)),
-        fits_trend,
-    )
+            .collect();
+        days.sort_unstable();
+        days.dedup();
+        // The gain from the first meet day to each meet day.
+        let (mut fixed, mut years) = (vec![0.0], vec![0.0]);
+        for (done, pair) in days.windows(2).enumerate() {
+            let between = years_between(pair[0], pair[1]);
+            let meets_done = input.meets_before.saturating_add(done + 1);
+            fixed.push(fixed[done] + progress.at_next_meet(meets_done, between, 0.0));
+            years.push(years[done] + progress.counted_years(between));
+        }
+        // And to `on_day`, from the last meet day on or before it.
+        let done = days.partition_point(|&day| day <= input.on_day);
+        let last = done.saturating_sub(1);
+        let between = years_between(days[last], input.on_day).max(0.0);
+        let meets_done = input.meets_before.saturating_add(done);
+        let past_every_meet = done == days.len() && between > 0.0;
+        let gain_then = if past_every_meet {
+            progress.at_next_meet(meets_done, between, 0.0)
+        } else {
+            progress.step(meets_done).per_year * progress.counted_years(between)
+        };
+        let (fixed_then, years_then) = (
+            fixed[last] + gain_then,
+            years[last] + progress.counted_years(between),
+        );
+        // A meet without attempts after the last one with attempts gets that one's gain,
+        // which nothing reads.
+        let day_index = |day: i32| {
+            days.partition_point(|&meet_day| meet_day < day)
+                .min(days.len() - 1)
+        };
+        let since = |gains: &[f64], then: f64| {
+            input
+                .meets
+                .iter()
+                .map(|meet| then - gains[day_index(meet.day)])
+                .collect()
+        };
+        GainsSince {
+            fixed: since(&fixed, fixed_then),
+            years: since(&years, years_then),
+            meets_done: input.meets_before.saturating_add(days.len()),
+        }
+    }
+
+    /// Since the input's meet at `meet`.
+    fn since(&self, meet: usize, own_gain: f64) -> f64 {
+        self.fixed[meet] + own_gain * self.years[meet]
+    }
 }
 
 /// The log of the chance of a lift's makes and misses at the past meets of `input`, for a
@@ -304,16 +438,17 @@ pub fn log_chance_of_past_meets(
     curve: &MakeRateCurve,
 ) -> Option<f64> {
     let expected_kg = estimate.lifts.get(lift).as_ref()?.expected_max_kg;
-    let (level_day, _) = level_day(input);
-    let growth = (1.0 + estimate.yearly_progress).ln();
+    let gains = GainsSince::new(&PROGRESS, input);
+    // The estimate reports the typical yearly gain and the lifter's own together.
+    let own_gain = estimate.yearly_progress.ln_1p() - PROGRESS.step(gains.meets_done).per_year;
     Some(
         input
             .meets
             .iter()
-            .filter(|meet| !meet.attempts.get(lift).is_empty())
-            .map(|meet| {
-                let years = f64::from(level_day - meet.day) / DAYS_PER_YEAR;
-                let level_kg = expected_kg * (-growth * years).exp();
+            .enumerate()
+            .filter(|(_, meet)| !meet.attempts.get(lift).is_empty())
+            .map(|(index, meet)| {
+                let level_kg = expected_kg * (-gains.since(index, own_gain)).exp();
                 let chance = chance_of_outcomes(
                     curve,
                     meet.attempts.get(lift),
@@ -333,8 +468,8 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
     if !problems.is_empty() {
         return Err(problems);
     }
-    // Each lift's level is searched as a log ratio to its heaviest attempt, so every
-    // parameter starts near 0 on the same scale.
+    // Each lift's level on `on_day` is searched as a log ratio to its heaviest attempt, so
+    // every parameter starts near 0 on the same scale.
     let heaviest = input
         .meets
         .iter()
@@ -347,26 +482,28 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
                     .fold(kg, f64::max)
             })
         });
-    let (level_day, fits_trend) = level_day(input);
-    let years_before = |meet: &PastMeet| f64::from(level_day - meet.day) / DAYS_PER_YEAR;
+    let progress = &PROGRESS;
+    let gains = GainsSince::new(progress, input);
+    let log_typical_opener = input.typical_opener.map(|_, share| share.ln());
     let cost = |x: [f64; PARAMETERS]| {
-        // Without a trend the progress parameter only meets its prior, which keeps it at 0
-        // and its second derivative positive, so the covariance can still be found.
-        let mut cost = (x[PROGRESS] / YEARLY_PROGRESS_SPREAD).powi(2) / 2.0;
-        let progress = if fits_trend { x[PROGRESS] } else { 0.0 };
-        for lift in Lift::ALL {
-            let index = lift as usize;
-            if *heaviest.get(lift) == 0.0 {
-                cost += x[index].powi(2) / 2.0;
-                continue;
-            }
-            let level_kg = heaviest.get(lift) * x[index].exp();
-            for meet in &input.meets {
+        let own_gain = x[OWN_GAIN];
+        let mut cost = (own_gain / progress.yearly_spread).powi(2) / 2.0;
+        // A lift with no attempts only meets this, which keeps its parameter at 0.
+        for lift in Lift::ALL
+            .into_iter()
+            .filter(|&lift| *heaviest.get(lift) == 0.0)
+        {
+            cost += x[lift as usize].powi(2) / 2.0;
+        }
+        let level_kg = heaviest.map(|lift, kg| kg * x[lift as usize].exp());
+        for (index, meet) in input.meets.iter().enumerate() {
+            let shrink = (-gains.since(index, own_gain)).exp();
+            for lift in Lift::ALL {
                 let attempts = meet.attempts.get(lift);
                 let Some(opener) = attempts.first() else {
                     continue;
                 };
-                let level_then_kg = level_kg * (-progress * years_before(meet)).exp();
+                let level_then_kg = level_kg.get(lift) * shrink;
                 let chance = chance_of_outcomes(
                     input.curves.get(lift),
                     attempts,
@@ -375,8 +512,8 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
                 );
                 cost -= chance.max(f64::MIN_POSITIVE).ln();
                 let opener_ratio = (opener.kg / level_then_kg).ln();
-                let typical = input.typical_opener.get(lift).ln();
-                cost += ((opener_ratio - typical) / OPENER_SPREAD).powi(2) / 2.0;
+                cost +=
+                    ((opener_ratio - log_typical_opener.get(lift)) / OPENER_SPREAD).powi(2) / 2.0;
             }
         }
         cost
@@ -394,9 +531,9 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
                 .map(|meet| meet.day)
         };
         let latest_day = lift_days().max()?;
-        // Since the latest meet the level drifts like a random walk, with the day-form
+        // Since the latest meet the level also drifts like a random walk, with the day-form
         // spread as its yearly spread, on top of the fit's own spread.
-        let years_since = f64::from(input.on_day - latest_day).max(0.0) / DAYS_PER_YEAR;
+        let years_since = years_between(latest_day, input.on_day).max(0.0);
         let fit_spread = covariance.map_or(f64::NAN, |c| c[index][index].sqrt());
         Some(LiftEstimate {
             expected_max_kg: heaviest.get(lift) * best[index].exp(),
@@ -404,14 +541,11 @@ pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<Estim
             meets: lift_days().count(),
         })
     });
+    let step = progress.step(gains.meets_done);
     Ok(MaxEstimate {
         shared_uncertainty: shared_uncertainty(&lifts),
         lifts,
-        yearly_progress: if fits_trend {
-            best[PROGRESS].exp_m1()
-        } else {
-            0.0
-        },
+        yearly_progress: (step.per_year + best[OWN_GAIN]).exp_m1(),
     })
 }
 
@@ -438,19 +572,35 @@ mod tests {
             day_form_spread: SPREAD,
             meets,
             on_day,
+            meets_before: 0,
         }
     }
 
-    /// A lifter at `level_kg` on day 0, getting `yearly_growth` stronger each year, who
-    /// opens at the typical share and jumps 5% and then 4% after a make.
-    fn simulated_meets(level_kg: PerLift<f64>, yearly_growth: f64, count: i32) -> Vec<PastMeet> {
+    /// How much stronger a lifter gets in `days` after `meets_done` meets, as a ratio, when
+    /// they progress as lifters typically do plus `own_gain` a year, if the meet after
+    /// comes then.
+    fn growth(meets_done: usize, days: i32, own_gain: f64) -> f64 {
+        let years = f64::from(days) / DAYS_PER_YEAR;
+        PROGRESS.at_next_meet(meets_done, years, own_gain).exp()
+    }
+
+    /// A lifter at `level_kg` at their first meet, with a meet every 60 days, progressing
+    /// as lifters typically do plus `own_gain` a year, who opens at the typical share and
+    /// jumps 5% and then 4% after a make. Also the levels at the last meet.
+    fn simulated_meets(
+        level_kg: PerLift<f64>,
+        own_gain: f64,
+        count: usize,
+    ) -> (Vec<PastMeet>, PerLift<f64>) {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
-        (0..count)
-            .map(|i| {
-                let day = i * 60;
-                let growth = (1.0 + yearly_growth).powf(f64::from(day) / DAYS_PER_YEAR);
+        let mut level_kg = level_kg;
+        let meets = (0..count)
+            .map(|done| {
+                if done > 0 {
+                    let growth = growth(done, 60, own_gain);
+                    level_kg = level_kg.map(|_, kg| kg * growth);
+                }
                 let attempts = level_kg.map(|_, &level_kg| {
-                    let level_kg = level_kg * growth;
                     let form: f64 = rng.sample(StandardNormal);
                     let day_max_kg = level_kg * (1.0 + SPREAD * form);
                     let mut kg = (level_kg * OPENER / 2.5).round() * 2.5;
@@ -465,9 +615,13 @@ mod tests {
                     }
                     attempts
                 });
-                PastMeet { day, attempts }
+                PastMeet {
+                    day: done as i32 * 60,
+                    attempts,
+                }
             })
-            .collect()
+            .collect();
+        (meets, level_kg)
     }
 
     fn levels() -> PerLift<f64> {
@@ -479,14 +633,16 @@ mod tests {
     }
 
     #[test]
-    fn finds_a_steady_lifters_maxes() {
-        let meets = simulated_meets(levels(), 0.0, 12);
-        let estimate = estimate_maxes(&input(meets, 700)).unwrap();
-        for (lift, level) in levels().iter() {
+    fn finds_a_typical_lifters_maxes_at_their_next_meet() {
+        let (meets, last_kg) = simulated_meets(levels(), 0.0, 12);
+        let last_day = meets.last().unwrap().day;
+        let estimate = estimate_maxes(&input(meets, last_day + 40)).unwrap();
+        for (lift, last_kg) in last_kg.iter() {
             let found = estimate.lifts.get(lift).unwrap();
             assert_eq!(found.meets, 12);
+            let expected_kg = last_kg * growth(12, 40, 0.0);
             assert!(
-                (found.expected_max_kg / level - 1.0).abs() < 0.025,
+                (found.expected_max_kg / expected_kg - 1.0).abs() < 0.025,
                 "{lift}: {found:?}"
             );
             assert!(
@@ -494,61 +650,154 @@ mod tests {
                 "{found:?}"
             );
         }
-        assert!(estimate.yearly_progress.abs() < 0.04, "{estimate:?}");
-    }
-
-    #[test]
-    fn follows_a_lifter_getting_stronger() {
-        let meets = simulated_meets(levels(), 0.1, 12);
-        let last_day = meets.last().unwrap().day;
-        let estimate = estimate_maxes(&input(meets, last_day)).unwrap();
+        let typical = PROGRESS.step(12).per_year.exp_m1();
         assert!(
-            (estimate.yearly_progress - 0.1).abs() < 0.05,
+            (estimate.yearly_progress - typical).abs() < 0.04,
             "{estimate:?}"
         );
-        let growth = 1.1f64.powf(f64::from(last_day) / DAYS_PER_YEAR);
-        let squat = estimate.lifts.squat.unwrap().expected_max_kg;
-        assert!((squat / (200.0 * growth) - 1.0).abs() < 0.03, "{squat}");
     }
 
     #[test]
-    fn carries_the_trend_at_most_about_six_months_past_the_last_meet() {
-        let meets = simulated_meets(levels(), 0.1, 12);
+    fn follows_a_lifter_getting_stronger_than_typical() {
+        let (meets, last_kg) = simulated_meets(levels(), 0.1, 12);
+        let last_day = meets.last().unwrap().day;
+        let estimate = estimate_maxes(&input(meets, last_day)).unwrap();
+        let expected = (PROGRESS.step(12).per_year + 0.1).exp_m1();
+        assert!(
+            (estimate.yearly_progress - expected).abs() < 0.05,
+            "{estimate:?}"
+        );
+        let squat = estimate.lifts.squat.unwrap().expected_max_kg;
+        assert!((squat / last_kg.squat - 1.0).abs() < 0.03, "{squat}");
+    }
+
+    #[test]
+    fn carries_the_yearly_gain_only_so_far_past_the_last_meet() {
+        let (meets, _) = simulated_meets(levels(), 0.1, 12);
         let last_day = meets.last().unwrap().day;
         let at = |on_day| estimate_maxes(&input(meets.clone(), on_day)).unwrap();
-        let capped = at(last_day + MAX_TREND_DAYS);
-        let stale = at(last_day + 600);
+        let most_days = (PROGRESS.most_years * DAYS_PER_YEAR).ceil() as i32;
+        let capped = at(last_day + most_days);
+        let stale = at(last_day + 2 * most_days);
         let squat = |estimate: &MaxEstimate| estimate.lifts.squat.unwrap().expected_max_kg;
         assert_eq!(squat(&stale), squat(&capped));
-        assert!(squat(&capped) > squat(&at(last_day)), "{capped:?}");
-        let projected = 200.0 * 1.1f64.powf(f64::from(last_day + 600) / DAYS_PER_YEAR);
-        assert!(squat(&stale) < projected * 0.97, "{stale:?}");
+        assert!(squat(&capped) > squat(&at(last_day + 1)), "{capped:?}");
     }
 
     #[test]
-    fn a_single_meet_day_shows_no_trend() {
-        let meets = simulated_meets(levels(), 0.0, 1);
-        let estimate = estimate_maxes(&input(meets.clone(), 400)).unwrap();
-        assert_eq!(estimate.yearly_progress, 0.0);
+    fn a_new_lifter_is_expected_to_progress_as_new_lifters_do() {
+        let (meets, _) = simulated_meets(levels(), 0.0, 1);
+        let next_meet = estimate_maxes(&input(meets.clone(), 120)).unwrap();
         let on_the_day = estimate_maxes(&input(meets, 0)).unwrap();
-        assert_eq!(
-            estimate.lifts.squat.unwrap().expected_max_kg,
-            on_the_day.lifts.squat.unwrap().expected_max_kg
+        let squat = |estimate: &MaxEstimate| estimate.lifts.squat.unwrap().expected_max_kg;
+        let grown = squat(&next_meet) / squat(&on_the_day);
+        assert!((grown / growth(1, 120, 0.0) - 1.0).abs() < 1e-3, "{grown}");
+        assert!(
+            (next_meet.yearly_progress - PROGRESS.step(1).per_year.exp_m1()).abs() < 1e-3,
+            "{next_meet:?}"
         );
         let uncertainty = on_the_day.lifts.squat.unwrap().uncertainty;
         assert!(uncertainty > 0.0 && uncertainty < 0.1, "{uncertainty}");
+        assert!(next_meet.lifts.squat.unwrap().uncertainty > uncertainty);
+    }
+
+    #[test]
+    fn adds_each_meets_step_and_the_yearly_gain_between_meet_days() {
+        let meet = |day| PastMeet {
+            day,
+            attempts: PerLift {
+                squat: vec![PastAttempt {
+                    kg: 100.0,
+                    made: true,
+                }],
+                bench: vec![],
+                deadlift: vec![],
+            },
+        };
+        let gains = |on_day| {
+            let input = input(vec![meet(100), meet(0), meet(100)], on_day);
+            GainsSince::new(&PROGRESS, &input)
+        };
+        let [first, second] = [PROGRESS.step(1), PROGRESS.step(2)];
+        let years = |days: i32| f64::from(days) / DAYS_PER_YEAR;
+        let own_gain = 0.02;
+        let after = gains(500);
+        let to_next = second.at_next_meet
+            + (second.per_year + own_gain) * years(400).min(PROGRESS.most_years);
+        assert!((after.since(0, own_gain) - to_next).abs() < 1e-12);
+        assert!((after.since(2, own_gain) - to_next).abs() < 1e-12);
+        let first_to_second = first.at_next_meet + (first.per_year + own_gain) * years(100);
+        assert!((after.since(1, own_gain) - first_to_second - to_next).abs() < 1e-12);
+        let between = gains(50);
+        let halfway = (first.per_year + own_gain) * years(50);
+        assert!((between.since(1, own_gain) - halfway).abs() < 1e-12);
+        assert!((between.since(0, own_gain) - (halfway - first_to_second)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn skips_a_meet_without_attempts_after_the_others() {
+        let (mut meets, _) = simulated_meets(levels(), 0.0, 2);
+        let last_day = meets.last().unwrap().day;
+        let with_empty = |meets: Vec<PastMeet>| estimate_maxes(&input(meets, last_day + 100));
+        let without = with_empty(meets.clone()).unwrap();
+        meets.push(PastMeet {
+            day: last_day + 50,
+            attempts: PerLift::from_fn(|_| Vec::new()),
+        });
+        assert_eq!(with_empty(meets).unwrap(), without);
+    }
+
+    #[test]
+    fn counts_the_meets_before_the_ones_given() {
+        let (meets, _) = simulated_meets(levels(), 0.0, 2);
+        let last_day = meets.last().unwrap().day;
+        let estimate = |meets_before| {
+            let input = MaxEstimateInput {
+                meets_before,
+                ..input(meets.clone(), last_day + 200)
+            };
+            let gains = GainsSince::new(&PROGRESS, &input);
+            (gains, estimate_maxes(&input).unwrap())
+        };
+        let ((new_gains, new), (veteran_gains, veteran)) = (estimate(0), estimate(8));
+        let years = |days: i32| f64::from(days) / DAYS_PER_YEAR;
+        let new_to_last = PROGRESS.at_next_meet(1, years(60), 0.0);
+        let new_since_last = PROGRESS.at_next_meet(2, years(200), 0.0);
+        assert!((new_gains.since(0, 0.0) - new_to_last - new_since_last).abs() < 1e-12);
+        let veteran_to_last = PROGRESS.at_next_meet(9, years(60), 0.0);
+        let veteran_since_last = PROGRESS.at_next_meet(10, years(200), 0.0);
+        let veteran_since = veteran_to_last + veteran_since_last;
+        assert!((veteran_gains.since(0, 0.0) - veteran_since).abs() < 1e-12);
+        let squat = |estimate: &MaxEstimate| estimate.lifts.squat.unwrap().expected_max_kg;
+        assert!(squat(&veteran) < squat(&new), "{veteran:?} {new:?}");
+    }
+
+    #[test]
+    fn past_meets_are_likelier_for_the_curve_they_were_drawn_from() {
+        let (meets, _) = simulated_meets(levels(), 0.0, 6);
+        let input = input(meets, 700);
+        let estimate = estimate_maxes(&input).unwrap();
+        let log_chance = |technical_miss_chance| {
+            let curve = MakeRateCurve {
+                technical_miss_chance,
+                ..*input.curves.get(Lift::Bench)
+            };
+            log_chance_of_past_meets(&input, &estimate, Lift::Bench, &curve).unwrap()
+        };
+        let drawn = input.curves.bench.technical_miss_chance;
+        assert!(log_chance(drawn) > log_chance(0.5), "{}", log_chance(drawn));
     }
 
     #[test]
     fn the_lifts_share_their_average_uncertainty_and_at_least_half_a_percent() {
-        let estimate = estimate_maxes(&input(simulated_meets(levels(), 0.0, 3), 700)).unwrap();
+        let estimate = estimate_maxes(&input(simulated_meets(levels(), 0.0, 3).0, 700)).unwrap();
         let mean = Lift::ALL
             .iter()
             .map(|&lift| estimate.lifts.get(lift).unwrap().uncertainty)
             .sum::<f64>()
             / 3.0;
         assert!((estimate.shared_uncertainty - mean.max(0.005)).abs() < 1e-12);
-        let sure = estimate_maxes(&input(simulated_meets(levels(), 0.0, 40), 0)).unwrap();
+        let sure = estimate_maxes(&input(simulated_meets(levels(), 0.0, 40).0, 0)).unwrap();
         assert!(sure.shared_uncertainty >= 0.005, "{sure:?}");
     }
 
@@ -574,24 +823,8 @@ mod tests {
     }
 
     #[test]
-    fn past_meets_are_likelier_for_the_curve_they_were_drawn_from() {
-        let meets = simulated_meets(levels(), 0.0, 6);
-        let input = input(meets, 700);
-        let estimate = estimate_maxes(&input).unwrap();
-        let log_chance = |technical_miss_chance| {
-            let curve = MakeRateCurve {
-                technical_miss_chance,
-                ..*input.curves.get(Lift::Bench)
-            };
-            log_chance_of_past_meets(&input, &estimate, Lift::Bench, &curve).unwrap()
-        };
-        let drawn = input.curves.bench.technical_miss_chance;
-        assert!(log_chance(drawn) > log_chance(0.5), "{}", log_chance(drawn));
-    }
-
-    #[test]
     fn an_older_history_is_less_sure() {
-        let meets = simulated_meets(levels(), 0.0, 12);
+        let (meets, _) = simulated_meets(levels(), 0.0, 12);
         let last_day = meets.last().unwrap().day;
         let uncertainty = |on_day| {
             let estimate = estimate_maxes(&input(meets.clone(), on_day)).unwrap();
@@ -605,7 +838,7 @@ mod tests {
     #[test]
     fn more_meets_make_the_estimate_surer() {
         let uncertainty = |count| {
-            let estimate = estimate_maxes(&input(simulated_meets(levels(), 0.0, count), 700));
+            let estimate = estimate_maxes(&input(simulated_meets(levels(), 0.0, count).0, 700));
             estimate.unwrap().lifts.bench.unwrap().uncertainty
         };
         assert!(uncertainty(2) > uncertainty(12));

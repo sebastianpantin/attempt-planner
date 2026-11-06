@@ -39,7 +39,7 @@ impl MeetToMeet {
 
 /// Each lift's best made attempt, `None` unless every attempt was recorded and each lift
 /// has a make.
-fn bests(attempts: &PerLift<[f64; 3]>) -> Option<PerLift<f64>> {
+pub(crate) fn bests(attempts: &PerLift<[f64; 3]>) -> Option<PerLift<f64>> {
     let mut bests = PerLift::from_fn(|_| 0.0);
     for (lift, attempts) in attempts.iter() {
         let best = attempts.iter().copied().fold(0.0, f64::max);

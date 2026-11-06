@@ -29,12 +29,25 @@ The day form and make-rate numbers are inputs under "Advanced".
 
 ### Estimating maxes from past meets
 
-A meet's attempts say a lot about the day max: it was above every made attempt and probably below the misses. The estimate takes each lift's level today and one yearly rate of progress shared by the lifts, and picks the values that make the past meets' makes and misses most likely under the make-rate curves and day form above. Two more pieces of evidence keep it sensible when there is little data:
+A meet's attempts say a lot about the day max: it was above every made attempt and probably below the misses. The estimate takes each lift's level today and how much faster than typical the lifter gets stronger, shared by the lifts, and picks the values that make the past meets' makes and misses most likely under the make-rate curves and day form above. Two more pieces of evidence keep it sensible when there is little data:
 
 - Lifters open at a typical share of their max (the fitted 89–91%, give or take 5%), so a lifter who never misses still gets a finite max.
-- Progress is assumed to be none, give or take 10% a year, until the meets say otherwise.
+- Lifters progress as lifters typically do, give or take 8% a year, until their meets say otherwise.
 
-The uncertainty it reports comes from how sharply the likelihood peaks, and is filled in as the uncertainty of the expected max. It assumes steady progress, so a long history with a recent jump or slump can make it too sure; leaving out old meets helps.
+So the estimate for today includes the progress lifters typically make since their last meet. Typical progress comes from about 235,000 pairs of consecutive complete meets by the same lifter in IPF federations, comparing the best made attempts. Lifters are stronger at their next meet even a month later, most of all early on, as they learn to compete, and gain a yearly rate on top for up to about 14 months between meets:
+
+| Meets done | Stronger at the next meet | And a year |
+| --- | --- | --- |
+| 1 | 3.1% | 4.8% |
+| 2 | 2.1% | 3.0% |
+| 3 | 1.8% | 1.9% |
+| 4 | 1.6% | 1.1% |
+| 5 | 1.6% | 0.3% |
+| 6 or more | 1.2% | −0.7% |
+
+For example, the squat of a lifter whose only meet was in March, with 190 kg made and 197.5 kg missed, is estimated at 197 kg on the day and 210 kg in November. Meets done count from the meets pasted, plus any number given under "Meets before these" for a lifter who pastes only their latest meets: with nine meets before, the November estimate is 199 kg. `attempt-fit` prints a refit's progress in the form `PROGRESS` in `crates/sim/src/past_meets.rs` takes, with how far the shipped numbers are from it.
+
+The uncertainty it reports comes from how sharply the likelihood peaks, and is filled in as the uncertainty of the expected max. It assumes a lifter stays faster or slower than typical by the same amount, so a long history with a recent jump or slump can make it too sure.
 
 ### Where the default make-rate curve comes from
 
@@ -76,7 +89,7 @@ It takes a few seconds. This uses data from the OpenPowerlifting project, https:
 
 ### Backtest
 
-`--backtest` checks the model on meets it has not seen. It fits to nine lifters in ten. For each other lifter with two or more complete meets, it estimates the expected maxes for their latest meet from up to six meets before it, as the page does from past meets. It then gives each attempt of that meet a chance of being made, given the attempts before it, and scores the chances:
+`--backtest` checks the model on meets it has not seen. It fits to nine lifters in ten. For each other lifter with two or more complete meets, it estimates the expected maxes for their latest meet from all their meets before it, as the page does from past meets. It then gives each attempt of that meet a chance of being made, given the attempts before it, and scores the chances:
 
 ```sh
 cargo run --release -p attempt-fit -- --federation IPF --backtest path/to/openpowerlifting.csv
@@ -87,14 +100,14 @@ It takes about two minutes. Lower log loss is better. On IPF meets up to October
 | Chance of each attempt from | Mean predicted | Log loss |
 | --- | --- | --- |
 | The share of that attempt made, after a make or a miss, whatever the load | 78% | 0.447 |
-| The model, with maxes from past meets | 69% | 0.700 |
-| The model, with maxes from past meets and the opener the lifter chose | 73% | 0.577 |
-| As above, with a share of lifters prone to misses whatever the load | 73% | 0.565 |
-| As above, each lifter's share updated by their past misses | 73% | 0.564 |
-| The model, with the opener, and the 2nd and 3rd attempts the lifter chose | 78% | 0.497 |
-| As above, with a share of prone lifters | 78% | 0.498 |
+| The model, with maxes from past meets | 75% | 0.610 |
+| The model, with maxes from past meets and the opener the lifter chose | 77% | 0.539 |
+| As above, with a share of lifters prone to misses whatever the load | 77% | 0.520 |
+| As above, each lifter's share updated by their past misses | 77% | 0.519 |
+| The model, with the opener, and the 2nd and 3rd attempts the lifter chose | 79% | 0.489 |
+| As above, with a share of prone lifters | 79% | 0.486 |
 
-With maxes from past meets, even with the opener, the model is too pessimistic: attempts it gives under 50% are made 58–63% of the time. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 49–61%, but lifters make it 73–76% of the time.
+Expecting typical progress since the last meet, and using every past meet rather than the latest six, took the log loss from past meets from 0.700 to 0.610, and with the opener from 0.577 to 0.539; with the chosen attempts it went from 0.497 to 0.489. Still, with maxes from past meets, even with the opener, the model is too pessimistic: attempts it gives under 50% are made 55–60% of the time. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 52–63%, but lifters make it 73–76% of the time.
 
 Misses do run in lifters. A lifter who missed their opener misses the next meet's opener more often: 13.7% against 8.7% on the squat, 9.2% against 5.9% on the bench and 7.7% against 3.9% on the deadlift. Fitting a share of lifters prone to misses whatever the load to that fixes the squat opener (90.6% predicted against 88.9% made, from 98%), but it gains little in the backtest. The fit puts every repeated miss down to being prone, though other habits repeat too, such as always opening heavy, so it likely overstates the share.
 

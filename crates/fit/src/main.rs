@@ -19,7 +19,9 @@ use attempt_fit::backtest::{
 use attempt_fit::calibrate::MakeRates;
 use attempt_fit::data::{Entry, Filter, raw_full_power_entries};
 use attempt_fit::fitted::{Fitted, fit};
+use attempt_fit::progress::ProgressFit;
 use attempt_sim::lift::Lift;
+use attempt_sim::past_meets::{EXPERIENCE_GROUPS, PROGRESS, Progress};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
@@ -86,6 +88,7 @@ fn print_fit(fitted: &Fitted) {
          {squat_deadlift:.2}, bench–deadlift {bench_deadlift:.2})",
         history.mean_correlation()
     );
+    print_progress(&fitted.progress);
     let rates = |rates: MakeRates| rates.all().map(|r| format!("{:.1}", r * 100.0)).join(" ");
     for lift in Lift::ALL {
         let (stats, fit) = (fitted.stats.get(lift), fitted.calibrations.get(lift));
@@ -129,6 +132,66 @@ fn print_fit(fitted: &Fitted) {
             params.spread * 100.0
         );
     }
+}
+
+/// Prints the fitted progress as `PROGRESS` in the engine takes it, rounded as there, and
+/// how far the shipped one is from it.
+fn print_progress(fit: &ProgressFit) {
+    let progress = fit.progress;
+    println!(
+        "progress from meet to meet, the yearly gain carried at most {:.2} years, a lifter's \
+         own give or take {:.1}% a year",
+        progress.most_years,
+        progress.yearly_spread * 100.0
+    );
+    for (group, (step, pairs)) in progress.steps.iter().zip(fit.pairs).enumerate() {
+        let done = if group + 1 == EXPERIENCE_GROUPS {
+            format!("{}+", group + 1)
+        } else {
+            (group + 1).to_string()
+        };
+        println!(
+            "  after {done} meets ({pairs} pairs): {:.2}% at the next meet and {:.2}% a year",
+            step.at_next_meet * 100.0,
+            step.per_year * 100.0
+        );
+    }
+    println!("  as PROGRESS in crates/sim/src/past_meets.rs:");
+    println!("{}", progress_constant(&progress));
+    println!(
+        "  the shipped PROGRESS differs by at most {:.4}",
+        largest_difference(&progress, &PROGRESS)
+    );
+}
+
+fn progress_constant(progress: &Progress) -> String {
+    let steps: String = progress
+        .steps
+        .iter()
+        .map(|step| {
+            format!(
+                "        Step {{\n            at_next_meet: {:.4},\n            per_year: {:.4},\n        }},\n",
+                step.at_next_meet, step.per_year
+            )
+        })
+        .collect();
+    format!(
+        "pub const PROGRESS: Progress = Progress {{\n    steps: [\n{steps}    ],\n    most_years: {:.2},\n    yearly_spread: {:.3},\n}};",
+        progress.most_years, progress.yearly_spread
+    )
+}
+
+fn largest_difference(a: &Progress, b: &Progress) -> f64 {
+    a.steps
+        .iter()
+        .zip(&b.steps)
+        .flat_map(|(a, b)| [a.at_next_meet - b.at_next_meet, a.per_year - b.per_year])
+        .chain([
+            a.most_years - b.most_years,
+            a.yearly_spread - b.yearly_spread,
+        ])
+        .map(f64::abs)
+        .fold(0.0, f64::max)
 }
 
 fn print_backtest(backtest: &Backtest, load_choices: &[LoadChoice; 2]) {
