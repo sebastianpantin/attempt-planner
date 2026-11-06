@@ -88,7 +88,9 @@ import {
 } from "./problems.ts";
 import { isTerm, termHelp } from "./terms.ts";
 import { renderAnalytics } from "./analytics/analytics.ts";
+import { setUpMeetDay } from "./meet-day-view.ts";
 import { startSearch } from "./search-runner.ts";
+import { SERVICE_WORKER } from "./service-worker.ts";
 import { describeSearch } from "./search-view.ts";
 import { simulationWorker } from "./simulation.ts";
 import {
@@ -924,3 +926,14 @@ showBombOutCap();
 showPlans(initial);
 showSearchArea(initial);
 simulate(initial);
+setUpMeetDay(() => {
+  const values = readValues();
+  return {
+    request: buildSearchRequest(values),
+    missing: maxesPrompt(values, "start a meet"),
+  };
+});
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register(`./${SERVICE_WORKER}`).catch(() => {});
+}

@@ -1228,3 +1228,153 @@ dialog form {
     padding: 0 18px;
   }
 }
+
+.top-links {
+  display: flex;
+  gap: 20px;
+  white-space: nowrap;
+}
+
+body[data-view="meet"] #summary-bar {
+  display: none;
+}
+
+.meet-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 12px 40px;
+  display: grid;
+  gap: 16px;
+}
+
+.meet-page h2 {
+  margin: 0;
+}
+
+.meet-page h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.meet-page fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.meet-page legend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-weight: 650;
+}
+
+.meet-page[aria-busy="true"] .meet-next,
+.meet-page[aria-busy="true"] .meet-stats {
+  opacity: 0.6;
+}
+
+.meet-next {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  border-color: var(--accent-faint);
+  background: var(--accent-soft);
+}
+
+.meet-next p {
+  margin: 0;
+}
+
+.meet-slot {
+  font-weight: 650;
+}
+
+.meet-load strong {
+  font-size: 2.6rem;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.meet-stats {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+
+.meet-stats .stat {
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.meet-stepper {
+  width: 100%;
+  height: 56px;
+  justify-content: space-between;
+}
+
+.meet-stepper button {
+  width: 56px;
+  font-size: 1.4rem;
+}
+
+.meet-stepper input {
+  width: 5em;
+  height: 54px;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.problem-text {
+  margin: 0;
+  color: var(--problem);
+  font-size: 0.9rem;
+}
+
+.problem-text:empty {
+  display: none;
+}
+
+.meet-results {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.meet-results .btn {
+  min-height: 56px;
+  font-size: 1.05rem;
+  color: white;
+}
+
+.btn.made {
+  background: var(--make);
+}
+
+.btn.missed {
+  background: var(--miss);
+}
+
+.meet-log {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.meet-log th,
+.meet-log td {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.meet-log tbody th {
+  font-weight: 500;
+}
+
+.meet-log .made {
+  color: var(--make);
+  font-weight: 600;
+}
+
+.meet-log .missed {
+  color: var(--miss);
+  font-weight: 600;
+}
