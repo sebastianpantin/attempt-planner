@@ -53,6 +53,8 @@ import {
   buildEstimateRequest,
   estimateLine,
   estimateValues,
+  MOST_MEETS_BEFORE,
+  parseMeetsBefore,
   parsePastMeets,
   today,
 } from "./past-meets.ts";
@@ -796,6 +798,7 @@ byId("lifts").addEventListener("click", (event) => {
 });
 
 const pastMeets = byId("past-meets") as HTMLTextAreaElement;
+const meetsBeforeInput = byId("meets-before") as HTMLInputElement;
 const estimateButton = byId("estimate-maxes") as HTMLButtonElement;
 const useEstimateButton = byId("use-estimate") as HTMLButtonElement;
 let estimatedValues: [InputName, number][] = [];
@@ -841,6 +844,17 @@ const submitEstimate = simulationWorker("estimate", {
 
 estimateButton.addEventListener("click", () => {
   const { meets, skipped } = parsePastMeets(pastMeets.value);
+  const meetsBefore = meetsBeforeInput.validity.badInput
+    ? undefined
+    : parseMeetsBefore(meetsBeforeInput.value);
+  if (meetsBefore === undefined) {
+    showEstimate(undefined);
+    status(
+      "estimate-status",
+      `Meets before these must be a whole number from 0 to ${MOST_MEETS_BEFORE}, or left empty.`,
+    );
+    return;
+  }
   skippedMeets = skipped;
   bestMadeKg = bestMade(meets);
   if (meets.length === 0) {
@@ -858,6 +872,7 @@ estimateButton.addEventListener("click", () => {
       meets,
       today(),
       CALIBRATIONS[sex()].typicalOpener,
+      meetsBefore,
     ),
   );
 });

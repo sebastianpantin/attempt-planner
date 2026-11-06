@@ -11,3 +11,8 @@ publish = false
 [dependencies]
 attempt-sim = { path = "../sim" }
 csv = "1.4.0"
+
+[dev-dependencies]
+rand = { version = "0.10.3", default-features = false }
+rand_distr = { version = "0.6.0", default-features = false, features = ["std_math"] }
+rand_xoshiro = { version = "0.8.1", default-features = false }

@@ -2,7 +2,8 @@
 //!
 //! Lifters are split in two by name. The model is fitted to one part. For each lifter in
 //! the other part with at least two complete meets, the expected maxes for their latest
-//! meet are estimated from the meets before it, as the page does from pasted past meets.
+//! meet are estimated from all the meets before it, as the page does from pasted past
+//! meets.
 //! Each attempt of the latest meet then gets the model's chance of being made, given the
 //! attempts before it in the meet, and is scored against what happened.
 //!
@@ -34,8 +35,6 @@ const GRID_POINTS: usize = 61;
 
 /// One lifter in this many is held out for scoring.
 const HELD_OUT_EVERY: u64 = 10;
-/// The past meets used to estimate the maxes, the latest ones.
-const MAX_PAST_MEETS: usize = 6;
 /// Keeps the log loss finite for a chance rounded to 0 or 1.
 const SUREST_CHANCE: f64 = 1e-6;
 /// Lifters whose meets the load choice is fitted to, at most.
@@ -243,9 +242,9 @@ pub struct LoadChoice {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Meet {
-    day: i32,
-    attempts: PerLift<[f64; 3]>,
+pub(crate) struct Meet {
+    pub(crate) day: i32,
+    pub(crate) attempts: PerLift<[f64; 3]>,
 }
 
 impl Meet {
@@ -266,7 +265,7 @@ impl Meet {
 }
 
 /// Each lifter's complete meets in date order, one per day, for lifters with two or more.
-fn lifters_meets(entries: &[Entry]) -> Vec<Vec<Meet>> {
+pub(crate) fn lifters_meets(entries: &[Entry]) -> Vec<Vec<Meet>> {
     let complete = entries.iter().filter(|entry| {
         Lift::ALL
             .iter()
@@ -284,12 +283,6 @@ fn lifters_meets(entries: &[Entry]) -> Vec<Vec<Meet>> {
         .filter(|meets| meets.len() >= 2)
         .map(|meets| meets.iter().map(|(_, meet)| *meet).collect())
         .collect()
-}
-
-/// A lifter's latest meet and the past meets the estimate uses.
-fn latest_and_past(meets: &[Meet]) -> Option<(&Meet, &[Meet])> {
-    let (latest, past) = meets.split_last()?;
-    Some((latest, &past[past.len().saturating_sub(MAX_PAST_MEETS)..]))
 }
 
 /// Each attempt's index in [`Scores::attempts`]: the opener, then whether the attempt
@@ -480,6 +473,7 @@ impl Estimates {
             day_form_spread: model.day_form.spread,
             meets: past.iter().map(Meet::past).collect(),
             on_day: latest.day,
+            meets_before: 0,
         };
         let past_meets = estimate_maxes(&input).ok()?;
         let openers = latest.attempts.map(|_, attempts| attempts[0].abs());
@@ -515,7 +509,7 @@ pub fn fit_load_choice(model: &Model, entries: &[Entry], start: Option<&LoadChoi
         .iter()
         .step_by(step)
         .filter_map(|meets| {
-            let (latest, past) = latest_and_past(meets)?;
+            let (latest, past) = meets.split_last()?;
             let estimates = Estimates::of(model, latest, past)?;
             let (expected, day_form) = planned(model, &estimates.with_opener);
             Some((latest.attempts, expected, day_form))
@@ -560,7 +554,7 @@ type Models = [(Model, LoadChoice); 2];
 /// Scores one lifter's latest meet from the meets before it, in each of [`SCENARIOS`].
 fn score_lifter(fitted: &Fitted, models: &Models, meets: &[Meet]) -> Backtest {
     let mut backtest = Backtest::default();
-    let (latest, past) = latest_and_past(meets).expect("two or more meets");
+    let (latest, past) = meets.split_last().expect("two or more meets");
     let estimates = models
         .iter()
         .map(|(model, _)| Estimates::of(model, latest, past))

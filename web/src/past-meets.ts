@@ -147,11 +147,27 @@ export function parsePastMeets(text: string): ParsedMeets {
   return firstLine.includes("Squat1Kg") ? fromCsv(text) : fromLines(text);
 }
 
+/** More meets than anyone has done, which keeps the count a sensible number. */
+export const MOST_MEETS_BEFORE = 999;
+
+/**
+ * The meets done before the pasted ones: 0 when left empty, `undefined` unless a whole
+ * number from 0 to {@link MOST_MEETS_BEFORE}.
+ */
+export function parseMeetsBefore(text: string): number | undefined {
+  if (text.trim() === "") return 0;
+  const count = Number(text);
+  return Number.isInteger(count) && count >= 0 && count <= MOST_MEETS_BEFORE
+    ? count
+    : undefined;
+}
+
 export function buildEstimateRequest(
   values: FormValues,
   meets: PastMeet[],
   onDay: number,
   typicalOpener: MaxEstimateInput["typicalOpener"],
+  meetsBefore = 0,
 ): MaxEstimateInput {
   return {
     curves: perLift((lift) => ({
@@ -164,6 +180,7 @@ export function buildEstimateRequest(
     dayFormSpread: values.spreadPercent / 100,
     meets,
     onDay,
+    meetsBefore,
   };
 }
 

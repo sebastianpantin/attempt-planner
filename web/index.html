@@ -108,12 +108,13 @@
               <span class="link">Estimate them from your past meets</span>
             </summary>
             <p class="note">
-              Estimates your expected maxes from the attempts you took, and
-              shows your best made lifts next to them. Paste the CSV from your
-              OpenPowerlifting lifter page, or write one meet per line: the
-              date, then 3 squat, 3 bench and 3 deadlift attempts, with a minus
-              sign for a miss and 0 for an attempt not taken. Only raw meets
-              count, and nothing leaves your browser.
+              Estimates your expected maxes today from the attempts you took,
+              including the progress lifters typically make since their last
+              meet, and shows your best made lifts next to them. Paste the CSV
+              from your OpenPowerlifting lifter page, or write one meet per
+              line: the date, then 3 squat, 3 bench and 3 deadlift attempts,
+              with a minus sign for a miss and 0 for an attempt not taken. Only
+              raw meets count, and nothing leaves your browser.
             </p>
             <p class="note" id="past-meets-example">
               For example:
@@ -125,6 +126,26 @@
               aria-label="Past meets"
               aria-describedby="past-meets-example"
             ></textarea>
+            <label class="field">
+              Meets before these
+              <span class="input">
+                <input
+                  id="meets-before"
+                  type="number"
+                  min="0"
+                  max="999"
+                  step="1"
+                  inputmode="numeric"
+                  placeholder="none"
+                  aria-describedby="meets-before-hint"
+                />
+              </span>
+            </label>
+            <p class="note" id="meets-before-hint">
+              Lifters gain less from one meet to the next the more meets they
+              have done. If you only pasted your latest meets, say how many you
+              did before them. Left empty, these are taken to be all your meets.
+            </p>
             <div class="actions">
               <button type="button" class="btn secondary" id="estimate-maxes">
                 Estimate maxes

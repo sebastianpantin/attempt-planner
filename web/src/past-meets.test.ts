@@ -6,6 +6,7 @@ import {
   estimateLine,
   dayNumber,
   estimateValues,
+  parseMeetsBefore,
   parsePastMeets,
   today,
 } from "./past-meets.ts";
@@ -97,6 +98,28 @@ it("asks for an estimate with the page's curves and day-form spread", () => {
   });
   expect(request.dayFormSpread).toBe(EXAMPLE.spreadPercent / 100);
   expect(request.onDay).toBe(100);
+  expect(request.meetsBefore).toBe(0);
+  const later = buildEstimateRequest(
+    EXAMPLE,
+    [],
+    100,
+    CALIBRATIONS.any.typicalOpener,
+    7,
+  );
+  expect(later.meetsBefore).toBe(7);
+});
+
+it("reads the meets before the pasted ones, none when left empty", () => {
+  expect(parseMeetsBefore("")).toBe(0);
+  expect(parseMeetsBefore("  ")).toBe(0);
+  expect(parseMeetsBefore("12")).toBe(12);
+  expect(parseMeetsBefore("0")).toBe(0);
+  expect(parseMeetsBefore("999")).toBe(999);
+  expect(parseMeetsBefore("1000")).toBeUndefined();
+  expect(parseMeetsBefore("1e12")).toBeUndefined();
+  expect(parseMeetsBefore("-1")).toBeUndefined();
+  expect(parseMeetsBefore("2.5")).toBeUndefined();
+  expect(parseMeetsBefore("many")).toBeUndefined();
 });
 
 it("fills in the estimated maxes and their shared uncertainty", () => {

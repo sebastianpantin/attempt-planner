@@ -3,9 +3,11 @@
 use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::model::{DayForm, MakeRateCurve};
 
+use crate::backtest::lifters_meets;
 use crate::calibrate::{Calibration, OpenerMisses, calibrate_kinds, calibrate_lifts};
 use crate::data::Entry;
 use crate::history::{MeetToMeet, meet_to_meet, opener_misses};
+use crate::progress::{ProgressFit, fit_progress};
 use crate::stats::{AttemptStats, attempt_stats};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,6 +18,11 @@ pub struct Fitted {
     pub opener_misses: PerLift<OpenerMisses>,
     /// Calibrated with a share of lifters prone to misses whatever the load.
     pub kinds: PerLift<Calibration>,
+    /// How much stronger lifters get from meet to meet. The estimate of the maxes from past
+    /// meets uses the progress shipped with the engine, [`PROGRESS`], not this.
+    ///
+    /// [`PROGRESS`]: attempt_sim::past_meets::PROGRESS
+    pub progress: ProgressFit,
 }
 
 pub fn fit(entries: &[Entry]) -> Result<Fitted, String> {
@@ -40,12 +47,15 @@ pub fn fit(entries: &[Entry]) -> Result<Fitted, String> {
         let stats = stats.get(lift);
         (stats.make_rates, *opener_misses.get(lift), stats.jumps)
     }));
+    let progress = fit_progress(&lifters_meets(entries))
+        .ok_or("too few lifters with consecutive complete meets")?;
     Ok(Fitted {
         stats,
         calibrations: PerLift::from_fn(|lift| calibrations[lift as usize]),
         history,
         opener_misses,
         kinds: PerLift::from_fn(|lift| kinds[lift as usize]),
+        progress,
     })
 }
 
