@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::days::{StepPlan, Steps, goal_steps, totals};
 use crate::evaluate::{InputProblem, Lifter, MeetDays, plan_problems};
 use crate::lift::{Lift, PerLift};
+use crate::meet_day::Taken;
 pub use crate::outcome::Outcome;
 use crate::outcome::{OutcomeTally, is_valid_bomb_out_cap};
 use crate::plan::{Jumps, LiftPlan};
@@ -26,6 +27,15 @@ pub struct SearchInput {
     /// cap, simulations and seed, so the search need not sweep again. Swept when absent or
     /// invalid.
     pub family_best: Option<PerLift<LiftPlan>>,
+}
+
+/// Where a search starts from and what it ranks plans by.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SearchStart {
+    pub(crate) plans: Option<PerLift<LiftPlan>>,
+    pub(crate) family_best: Option<PerLift<LiftPlan>>,
+    pub(crate) goal: Option<Weight>,
+    pub(crate) bomb_out_cap: Option<f64>,
 }
 
 /// Plans with their outcome on the simulated meets they were scored on.
@@ -114,6 +124,8 @@ impl Setting {
 #[derive(Debug, Clone)]
 pub struct Search {
     days: Arc<MeetDays>,
+    /// The attempts already taken, whose settings stay as they were.
+    taken: Taken,
     goal: Option<Weight>,
     bomb_out_cap: Option<f64>,
     best: Found,
@@ -133,23 +145,41 @@ impl Search {
             input.seed,
             input.bomb_out_cap,
         )?;
+        Ok(Self::on_days(
+            days,
+            Taken::default(),
+            &SearchStart {
+                plans: input.start,
+                family_best: input.family_best,
+                goal: input.goal,
+                bomb_out_cap: input.bomb_out_cap,
+            },
+        ))
+    }
+
+    /// A search on `days` for plans that take the attempts in `taken`, which `days` must
+    /// agree with. Only the settings the meet has not decided yet change.
+    pub(crate) fn on_days(days: Arc<MeetDays>, taken: Taken, start: &SearchStart) -> Self {
         let higher = |a: Found, b: Found| {
-            if ranks_higher(input.bomb_out_cap, &b.outcome, &a.outcome) {
+            if ranks_higher(start.bomb_out_cap, &b.outcome, &a.outcome) {
                 b
             } else {
                 a
             }
         };
-        let found = |plans| Found {
-            plans,
-            outcome: score(&days, &plans, input.goal),
+        let found = |plans: PerLift<LiftPlan>| {
+            let plans = taken.pin_all(&plans);
+            Found {
+                plans,
+                outcome: score(&days, &plans, start.goal),
+            }
         };
         let valid =
             |plans: &PerLift<LiftPlan>| plans.iter().all(|(_, plan)| plan.problems().is_empty());
-        let family_best = match input.family_best.filter(valid) {
+        let family_best = match start.family_best.filter(valid) {
             Some(plans) => Some(found(plans)),
             None => {
-                let swept = tradeoff::sweep(&days, input.goal, input.bomb_out_cap);
+                let swept = tradeoff::sweep(&days, start.goal, start.bomb_out_cap, &taken);
                 swept.best_for_search.map(|index| {
                     let point = &swept.points[index];
                     Found {
@@ -159,22 +189,22 @@ impl Search {
                 })
             }
         };
-        let start = input.start.filter(valid).map(found);
         let best = family_best
             .into_iter()
-            .chain(start)
+            .chain(start.plans.filter(valid).map(found))
             .reduce(higher)
             .unwrap_or_else(|| found(PerLift::from_fn(|_| fallback_plan())));
-        Ok(Self {
+        Self {
             days,
-            goal: input.goal,
-            bomb_out_cap: input.bomb_out_cap,
+            taken,
+            goal: start.goal,
+            bomb_out_cap: start.bomb_out_cap,
             best,
             others: Vec::new(),
             next: 0,
             unchanged: 0,
             round: 1,
-        })
+        }
     }
 
     pub fn is_done(&self) -> bool {
@@ -195,8 +225,9 @@ impl Search {
             }
             let current = *self.best.plans.get(lift);
             let expected_max = self.days.lifter().lifts.get(lift).expected_max;
+            let open = !self.taken.fixes(lift, setting);
             let mut improved = false;
-            for weight in setting.values(expected_max) {
+            for weight in setting.values(expected_max).filter(|_| open) {
                 let candidate = setting.with(current, weight);
                 if candidate == current || !candidate.problems().is_empty() {
                     continue;

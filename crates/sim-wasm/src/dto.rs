@@ -2,9 +2,10 @@ use attempt_sim::evaluate::{
     self, EvaluateInput, Evaluation, InputField, InputProblem, LiftModel, Lifter, ProblemCode,
 };
 use attempt_sim::lift::{Lift, PerLift};
+use attempt_sim::meet_day::{self, MeetDayInput};
 use attempt_sim::model::{DayForm, MakeRateCurve};
-use attempt_sim::plan::{Jumps, LiftPlan};
-use attempt_sim::rules::Weight;
+use attempt_sim::plan::{Jumps, LiftPlan, PlanStep};
+use attempt_sim::rules::{ATTEMPTS_PER_LIFT, Attempt, Weight};
 use attempt_sim::search::{self, ChangeInput, Outcome, Search, SearchInput, Setting};
 use attempt_sim::tradeoff::{self, PlanShape, TradeoffInput};
 use serde::{Deserialize, Serialize};
@@ -351,6 +352,114 @@ pub fn single_changes(request: &SearchRequest) -> ChangesResponse {
                 .collect(),
         },
         Err(problems) => ChangesResponse::Invalid {
+            problems: problems.into_iter().map(Problem::from).collect(),
+        },
+    }
+}
+
+/// An attempt taken at the meet.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct TakenAttempt {
+    pub weight_kg: f64,
+    pub made: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplanRequest {
+    pub lifter: LifterInput,
+    /// The plans going into the meet, which the replan starts from. Ignored when invalid.
+    pub plans: PerLift<LiftPlanKg>,
+    #[serde(default)]
+    #[tsify(optional)]
+    pub goal_kg: Option<f64>,
+    /// Highest acceptable chance of bombing out, from 0 to 1.
+    #[serde(default)]
+    #[tsify(optional)]
+    pub bomb_out_cap: Option<f64>,
+    pub simulations: u32,
+    pub seed: u32,
+    /// Every attempt taken so far in meet order: the squats, the benches, then the
+    /// deadlifts.
+    pub taken: Vec<TakenAttempt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub struct NextAttempt {
+    pub lift: Lift,
+    /// From 1.
+    pub attempt: usize,
+    pub weight_kg: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Tsify)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ReplanResponse {
+    Replanned {
+        /// Plans for the whole meet that take the attempts so far, and how they do given
+        /// them.
+        result: PlanOutcome,
+        /// Absent once every attempt is taken.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[tsify(optional)]
+        next: Option<NextAttempt>,
+        /// How many simulated meets the figures come from.
+        meets: u32,
+        /// Whether the meets were drawn afresh, because too few simulated meets went the
+        /// way this one has.
+        redrawn: bool,
+    },
+    Invalid {
+        problems: Vec<Problem>,
+    },
+}
+
+pub fn replan(request: &ReplanRequest) -> ReplanResponse {
+    let mut problems = Vec::new();
+    let lifter = read_lifter(&mut problems, &request.lifter);
+    let goal = read_goal(&mut problems, request.goal_kg);
+    let mut ignored = Vec::new();
+    let plans = read_plans(&mut ignored, &request.plans);
+    let taken = request
+        .taken
+        .iter()
+        .enumerate()
+        .map(|(index, attempt)| {
+            let lift = Lift::ALL.get(index / ATTEMPTS_PER_LIFT).copied();
+            let step = PlanStep::ALL[index % ATTEMPTS_PER_LIFT];
+            Attempt {
+                weight: read_weight(&mut problems, attempt.weight_kg, lift, step.into()),
+                made: attempt.made,
+            }
+        })
+        .collect();
+    let input = MeetDayInput {
+        lifter,
+        plans: ignored.is_empty().then_some(plans),
+        goal,
+        bomb_out_cap: request.bomb_out_cap,
+        simulations: request.simulations,
+        seed: u64::from(request.seed),
+        taken,
+    };
+    match checked(problems, input).and_then(|input| meet_day::replan(&input)) {
+        Ok(replan) => ReplanResponse::Replanned {
+            result: PlanOutcome::new(&replan.found.plans, replan.found.outcome),
+            next: replan.next.map(|next| NextAttempt {
+                lift: next.lift,
+                attempt: next.attempt,
+                weight_kg: next.weight.kg(),
+            }),
+            meets: replan.meets,
+            redrawn: replan.redrawn,
+        },
+        Err(problems) => ReplanResponse::Invalid {
             problems: problems.into_iter().map(Problem::from).collect(),
         },
     }
@@ -810,5 +919,64 @@ mod tests {
         let evaluation = evaluation(&request);
         assert_eq!(evaluation.goal_probability, None);
         assert_eq!(evaluation.standard_errors.goal_probability, None);
+    }
+
+    fn replan_request(taken: &[(f64, bool)]) -> ReplanRequest {
+        let search = search_request();
+        ReplanRequest {
+            lifter: search.lifter,
+            plans: search.plans,
+            goal_kg: search.goal_kg,
+            bomb_out_cap: search.bomb_out_cap,
+            simulations: search.simulations,
+            seed: search.seed,
+            taken: taken
+                .iter()
+                .map(|&(weight_kg, made)| TakenAttempt { weight_kg, made })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_replan_takes_the_attempts_so_far_and_names_the_next_one() {
+        let ReplanResponse::Replanned { result, next, .. } =
+            replan(&replan_request(&[(180.0, true), (190.0, false)]))
+        else {
+            panic!("expected a replan");
+        };
+        assert_eq!(result.plans.squat.opener_kg, 180.0);
+        assert_eq!(result.plans.squat.second.after_make_kg, 10.0);
+        let next = next.unwrap();
+        assert_eq!((next.lift, next.attempt), (Lift::Squat, 3));
+        assert_eq!(
+            next.weight_kg,
+            190.0 + result.plans.squat.third.after_miss_kg
+        );
+    }
+
+    #[test]
+    fn a_replan_reports_unreadable_and_rule_breaking_attempts_by_lift_and_attempt() {
+        let problems = |taken: &[(f64, bool)]| -> Vec<_> {
+            let ReplanResponse::Invalid { problems } = replan(&replan_request(taken)) else {
+                panic!("expected problems");
+            };
+            problems
+                .into_iter()
+                .map(|p| (p.lift, p.field, p.code))
+                .collect()
+        };
+        let all_squats = [(180.0, true), (190.0, true), (200.0, true)];
+        assert_eq!(
+            problems(&[all_squats.as_slice(), &[(f64::NAN, true)]].concat()),
+            [(
+                Some(Lift::Bench),
+                InputField::Opener,
+                ProblemCode::InvalidWeight
+            )]
+        );
+        assert_eq!(
+            problems(&[(180.0, false), (177.5, true)]),
+            [(Some(Lift::Squat), InputField::Second, ProblemCode::Lighter)]
+        );
     }
 }

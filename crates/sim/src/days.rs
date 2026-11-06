@@ -3,7 +3,7 @@
 
 use crate::outcome::OutcomeTally;
 use crate::plan::LiftPlan;
-use crate::rules::{ATTEMPTS_PER_LIFT, HEAVIEST, PLATE_STEP, Weight};
+use crate::rules::{ATTEMPTS_PER_LIFT, Attempt, HEAVIEST, PLATE_STEP, Weight};
 
 /// A weight in plate steps. The attempts of a valid plan are whole plate steps, and even
 /// three of the heaviest attempts add up to far less than `u16::MAX` steps.
@@ -101,6 +101,33 @@ impl LiftDays {
 
     pub(crate) fn len(&self) -> usize {
         self.technical.len()
+    }
+
+    /// Clears `agrees` for each day on which one of `taken`, the lift's attempts so far in
+    /// order, would have gone the other way. Only whether an attempt was made is compared:
+    /// the load sets where a day's threshold has to lie, but says nothing more about it.
+    pub(crate) fn rule_out(&self, taken: &[Attempt], agrees: &mut [bool]) {
+        for (column, attempt) in self.missed_from.iter().zip(taken) {
+            let load = whole_steps(attempt.weight) as Steps;
+            for (agrees, &missed_from) in agrees.iter_mut().zip(column) {
+                *agrees &= (load < missed_from) == attempt.made;
+            }
+        }
+    }
+
+    /// The days whose entry in `keep` is set, in order.
+    pub(crate) fn select(&self, keep: &[bool]) -> Self {
+        fn kept<T: Copy>(column: &[T], keep: &[bool]) -> Vec<T> {
+            column
+                .iter()
+                .zip(keep)
+                .filter_map(|(&value, &keep)| keep.then_some(value))
+                .collect()
+        }
+        Self {
+            missed_from: self.missed_from.each_ref().map(|column| kept(column, keep)),
+            technical: kept(&self.technical, keep),
+        }
     }
 
     fn columns(&self, days: std::ops::Range<usize>) -> [&[Steps]; ATTEMPTS_PER_LIFT] {

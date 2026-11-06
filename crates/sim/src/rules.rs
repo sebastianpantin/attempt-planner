@@ -65,6 +65,20 @@ pub enum RuleViolation {
     NoIncreaseAfterMake { attempt: usize },
 }
 
+impl RuleViolation {
+    /// The attempt, from 1, that breaks the rule. `None` for too many attempts.
+    pub fn attempt(&self) -> Option<usize> {
+        match *self {
+            Self::TooManyAttempts => None,
+            Self::BelowBar { attempt }
+            | Self::TooHeavy { attempt }
+            | Self::NotLoadable { attempt }
+            | Self::Lighter { attempt }
+            | Self::NoIncreaseAfterMake { attempt } => Some(attempt),
+        }
+    }
+}
+
 impl fmt::Display for RuleViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

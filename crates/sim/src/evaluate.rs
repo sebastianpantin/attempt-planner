@@ -11,7 +11,9 @@ use crate::lift::{Lift, PerLift};
 use crate::model::{DayForm, MakeRateCurve};
 use crate::outcome::is_valid_bomb_out_cap;
 use crate::plan::{LiftPlan, PlanStep};
-use crate::rules::{ATTEMPTS_PER_LIFT, BAR, PLATE_STEP, RuleViolation, Weight, best_attempt};
+use crate::rules::{
+    ATTEMPTS_PER_LIFT, Attempt, BAR, PLATE_STEP, RuleViolation, Weight, best_attempt,
+};
 
 pub const MAX_SIMULATIONS: u32 = 1_000_000;
 
@@ -306,26 +308,36 @@ impl MeetDays {
             for (lift, model) in lifter.lifts.iter() {
                 let own = StandardNormal.sample(&mut rng);
                 let day_max_kg = draws.day_max(model.expected_max.kg(), shared, own);
-                let curve = &model.curve;
-                let technical =
-                    std::array::from_fn(|_| rng.random::<f64>() < curve.technical_miss_chance);
-                let thresholds_kg = technical.map(|technical| {
-                    let roll = rng.random();
-                    if technical {
-                        f64::NEG_INFINITY
-                    } else {
-                        curve.make_threshold_kg(day_max_kg, roll)
-                    }
-                });
+                let (thresholds_kg, technical) = draw_attempts(&mut rng, &model.curve, day_max_kg);
                 lifts.get_mut(lift).push(thresholds_kg, technical);
             }
         }
-        Ok(Self {
+        Ok(Self::from_lifts(lifts, lifter, seed))
+    }
+
+    /// Days simulated elsewhere for `lifter`, such as days drawn given a meet so far.
+    pub(crate) fn from_lifts(lifts: PerLift<LiftDays>, lifter: Lifter, seed: u64) -> Self {
+        Self {
+            simulations: u32::try_from(lifts.squat.len()).expect("at most MAX_SIMULATIONS days"),
             lifts,
             lifter,
-            simulations,
             seed,
-        })
+        }
+    }
+
+    /// The days on which every attempt in `taken` goes as it went, each lift's attempts in
+    /// order. Every plan that takes those attempts goes the same way up to there on each of
+    /// these days, so scoring it on them gives its chances given the meet so far.
+    pub(crate) fn agreeing(&self, taken: &PerLift<&[Attempt]>) -> Self {
+        let mut agrees = vec![true; self.len()];
+        for (lift, days) in self.lifts.iter() {
+            days.rule_out(taken.get(lift), &mut agrees);
+        }
+        Self::from_lifts(
+            self.lifts.map(|_, days| days.select(&agrees)),
+            self.lifter,
+            self.seed,
+        )
     }
 
     /// Like [`new`](Self::new), but hands back the days from the last call on this thread
@@ -412,6 +424,26 @@ impl MeetDays {
             self.simulations,
         ))
     }
+}
+
+/// One day's make thresholds in kg for a lift's attempts, minus infinity for a technical
+/// miss, and which attempts are technical misses.
+#[inline(always)]
+pub(crate) fn draw_attempts(
+    rng: &mut Xoshiro256PlusPlus,
+    curve: &MakeRateCurve,
+    day_max_kg: f64,
+) -> ([f64; ATTEMPTS_PER_LIFT], [bool; ATTEMPTS_PER_LIFT]) {
+    let technical = std::array::from_fn(|_| rng.random::<f64>() < curve.technical_miss_chance);
+    let thresholds_kg = technical.map(|technical| {
+        let roll = rng.random();
+        if technical {
+            f64::NEG_INFINITY
+        } else {
+            curve.make_threshold_kg(day_max_kg, roll)
+        }
+    });
+    (thresholds_kg, technical)
 }
 
 /// Simulates the meet `input.simulations` times and summarises the outcomes.
