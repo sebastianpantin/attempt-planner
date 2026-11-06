@@ -4,9 +4,10 @@ use std::time::Instant;
 
 use attempt_sim::evaluate::{EvaluateInput, LiftModel, Lifter, MeetDays, evaluate};
 use attempt_sim::lift::PerLift;
+use attempt_sim::meet_day::{MeetDayInput, replan};
 use attempt_sim::model::{DayForm, MakeRateCurve};
 use attempt_sim::plan::{Jumps, LiftPlan};
-use attempt_sim::rules::Weight;
+use attempt_sim::rules::{Attempt, Weight};
 use attempt_sim::search::{ChangeInput, SearchInput, search, single_changes};
 use attempt_sim::tradeoff::{TradeoffInput, tradeoff};
 
@@ -129,4 +130,27 @@ fn main() {
             family_best: None,
         })
     });
+    let attempt = |kg_taken: f64, made: bool| Attempt {
+        weight: kg(kg_taken),
+        made,
+    };
+    for (name, taken) in [
+        ("replan made opener", vec![attempt(180.0, true)]),
+        (
+            "replan redrawn",
+            vec![attempt(180.0, false), attempt(180.0, false)],
+        ),
+    ] {
+        time(name, 20_000, true, |simulations, seed| {
+            replan(&MeetDayInput {
+                lifter: lifter(),
+                plans: Some(plans()),
+                goal,
+                bomb_out_cap: Some(0.05),
+                simulations,
+                seed,
+                taken: taken.clone(),
+            })
+        });
+    }
 }

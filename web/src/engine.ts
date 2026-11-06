@@ -4,6 +4,9 @@ import {
   type MaxEstimate,
   type MaxEstimateInput,
   PlanSearch,
+  replan,
+  type ReplanRequest,
+  type ReplanResponse,
   type SearchProgress,
   type SearchRequest,
   singleChanges,
@@ -21,6 +24,7 @@ export interface Jobs {
   evaluate: { request: EvaluateRequest; response: EvaluateResponse };
   tradeoff: { request: TradeoffRequest; response: TradeoffResponse };
   changes: { request: SearchRequest; response: ChangesResponse };
+  replan: { request: ReplanRequest; response: ReplanResponse };
   estimate: {
     request: MaxEstimateInput;
     response: { kind: "estimated"; estimate: MaxEstimate };
@@ -54,6 +58,8 @@ export function answer(
         return tradeoff(job.request);
       case "changes":
         return singleChanges(job.request);
+      case "replan":
+        return replan(job.request);
       case "estimate":
         return { kind: "estimated", estimate: estimateMaxes(job.request) };
     }

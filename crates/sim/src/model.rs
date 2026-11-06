@@ -46,12 +46,42 @@ impl MakeRateCurve {
         day_max_kg * (self.ratio_at_half + (1.0 / roll - 1.0).ln() / self.steepness)
     }
 
+    /// The logarithm of the chance that an attempt at `load_kg` goes as it did, worked out
+    /// without rounding to 0 or 1 even far from the day max, so that unlikely results still
+    /// rank the day maxes against each other.
+    pub fn ln_result_chance(&self, load_kg: f64, day_max_kg: f64, made: bool) -> f64 {
+        let past_half = self.steepness * (load_kg / day_max_kg - self.ratio_at_half);
+        let ln_strong_enough = -softplus(past_half);
+        let ln_too_heavy = -softplus(-past_half);
+        let ln_technical = self.technical_miss_chance.ln();
+        let ln_no_technical = (-self.technical_miss_chance).ln_1p();
+        if made {
+            ln_no_technical + ln_strong_enough
+        } else {
+            ln_add(ln_technical, ln_no_technical + ln_too_heavy)
+        }
+    }
+
     pub fn is_valid(&self) -> bool {
         let positive = |x: f64| x.is_finite() && x > 0.0;
         positive(self.ratio_at_half)
             && positive(self.steepness)
             && (0.0..1.0).contains(&self.technical_miss_chance)
     }
+}
+
+/// `ln(1 + e^x)` without overflow.
+fn softplus(x: f64) -> f64 {
+    x.max(0.0) + (-x.abs()).exp().ln_1p()
+}
+
+/// `ln(e^a + e^b)` without overflow, minus infinity when both are.
+fn ln_add(a: f64, b: f64) -> f64 {
+    let high = a.max(b);
+    if high == f64::NEG_INFINITY {
+        return high;
+    }
+    high + ((a - high).exp() + (b - high).exp()).ln()
 }
 
 /// How much a lifter's max moves on meet day.
@@ -163,6 +193,32 @@ mod tests {
                 load.kg() < CURVE.make_threshold_kg(day_max_kg, roll)
             );
         }
+    }
+
+    #[test]
+    fn the_log_chance_of_a_result_matches_the_make_probability() {
+        let curve = MakeRateCurve {
+            technical_miss_chance: 0.05,
+            ..CURVE
+        };
+        for load_kg in [150.0, 195.0, 200.0, 230.0] {
+            let made = curve.make_probability_kg(load_kg, 200.0);
+            let chance = |made| curve.ln_result_chance(load_kg, 200.0, made).exp();
+            assert!((chance(true) - made).abs() < 1e-12, "{load_kg}");
+            assert!((chance(false) - (1.0 - made)).abs() < 1e-12, "{load_kg}");
+        }
+    }
+
+    #[test]
+    fn results_far_from_the_day_max_keep_a_finite_log_chance() {
+        let sharp = MakeRateCurve {
+            steepness: 2_000.0,
+            ..CURVE
+        };
+        let missed_light = sharp.ln_result_chance(100.0, 200.0, false);
+        let made_heavy = sharp.ln_result_chance(300.0, 200.0, true);
+        assert!(missed_light.is_finite() && made_heavy.is_finite());
+        assert!(missed_light < sharp.ln_result_chance(110.0, 200.0, false));
     }
 
     #[test]

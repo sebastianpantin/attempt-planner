@@ -15,6 +15,11 @@ pub enum PlanStep {
     Third,
 }
 
+impl PlanStep {
+    /// The steps in attempt order, so attempt `n` belongs to `ALL[n - 1]`.
+    pub const ALL: [PlanStep; ATTEMPTS_PER_LIFT] = [Self::Opener, Self::Second, Self::Third];
+}
+
 /// The plan for one lift: an opener, then jump rules for the 2nd and 3rd attempts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LiftPlan {

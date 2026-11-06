@@ -10,10 +10,25 @@
   <body>
     <header class="top">
       <h1>Attempt planner</h1>
-      <button type="button" class="link" id="how-it-works">How it works</button>
+      <nav class="top-links" aria-label="Views">
+        <button
+          type="button"
+          class="link"
+          id="to-meet-day"
+          aria-controls="meet-day"
+        >
+          Meet day
+        </button>
+        <button type="button" class="link" id="to-planner" hidden>
+          Planner
+        </button>
+        <button type="button" class="link" id="how-it-works">
+          How it works
+        </button>
+      </nav>
     </header>
 
-    <main class="page">
+    <main class="page" id="planner">
       <form id="plan" novalidate>
         <section class="card" aria-labelledby="meet-heading">
           <h2 class="step" id="meet-heading"><b>1</b> Your meet</h2>
@@ -412,6 +427,119 @@
           </fieldset>
         </details>
       </form>
+    </main>
+    <main
+      class="meet-page"
+      id="meet-day"
+      aria-labelledby="meet-day-heading"
+      hidden
+    >
+      <h2 id="meet-day-heading" tabindex="-1">Meet day</h2>
+      <section
+        id="meet-start"
+        class="card stack"
+        aria-labelledby="meet-start-heading"
+      >
+        <h3 id="meet-start-heading">Start your meet from the plan</h3>
+        <p id="meet-start-plan"></p>
+        <p class="note">
+          After each attempt, enter the load and whether you made it. The
+          planner then plans the rest of your meet for your goal and bomb-out
+          limit. Your attempts stay in this browser, even after a reload or
+          without a connection.
+        </p>
+        <button type="button" class="btn primary" id="start-meet">
+          Start the meet
+        </button>
+      </section>
+      <div id="meet-progress" class="stack" hidden>
+        <p class="note" id="meet-plan"></p>
+        <section class="card meet-next" aria-labelledby="meet-next-heading">
+          <h3 class="note" id="meet-next-heading">Next attempt</h3>
+          <p class="meet-slot" id="meet-next-slot"></p>
+          <p class="meet-load"><strong id="meet-next-kg"></strong></p>
+          <p class="note" id="meet-after-next"></p>
+        </section>
+        <dl class="stats meet-stats">
+          <div class="stat" id="meet-goal-stat">
+            <dt>Chance of your goal</dt>
+            <dd id="meet-goal-chance"></dd>
+          </div>
+          <div class="stat risk">
+            <dt>Bomb-out risk</dt>
+            <dd id="meet-bomb-out"></dd>
+          </div>
+          <div class="stat">
+            <dt>Average total</dt>
+            <dd id="meet-average"></dd>
+          </div>
+        </dl>
+        <p class="note" id="meet-basis"></p>
+        <p class="warning" id="meet-warning"></p>
+        <p class="visually-hidden" id="meet-status" role="status"></p>
+        <ul class="problems" id="meet-problems"></ul>
+        <form id="meet-entry" class="card stack" novalidate>
+          <fieldset class="stack">
+            <legend id="meet-entry-legend"></legend>
+            <label class="field" for="meet-load">Load taken</label>
+            <span class="stepper meet-stepper">
+              <button
+                type="button"
+                tabindex="-1"
+                data-step="-1"
+                aria-label="2.5 kg less"
+              >
+                −
+              </button>
+              <span class="stepper-value">
+                <input
+                  id="meet-load"
+                  type="number"
+                  step="2.5"
+                  min="20"
+                  inputmode="decimal"
+                  aria-describedby="meet-load-problem"
+                />
+              </span>
+              <button
+                type="button"
+                tabindex="-1"
+                data-step="1"
+                aria-label="2.5 kg more"
+              >
+                +
+              </button>
+            </span>
+            <p class="problem-text" id="meet-load-problem"></p>
+            <div class="meet-results">
+              <button type="button" class="btn made" value="made">
+                <span aria-hidden="true">✓</span> Made
+              </button>
+              <button type="button" class="btn missed" value="missed">
+                <span aria-hidden="true">✗</span> Missed
+              </button>
+            </div>
+          </fieldset>
+        </form>
+        <button type="button" class="btn secondary" id="undo-attempt"></button>
+        <section class="card" aria-labelledby="meet-log-heading">
+          <h3 id="meet-log-heading">Your attempts</h3>
+          <table class="meet-log">
+            <thead>
+              <tr>
+                <td></td>
+                <th scope="col">1st</th>
+                <th scope="col">2nd</th>
+                <th scope="col">3rd</th>
+              </tr>
+            </thead>
+            <tbody id="meet-log"></tbody>
+          </table>
+        </section>
+        <button type="button" class="btn secondary" id="end-meet">
+          Clear this meet
+        </button>
+      </div>
     </main>
     <dialog id="how" aria-labelledby="how-heading">
       <h2 id="how-heading">How it works</h2>

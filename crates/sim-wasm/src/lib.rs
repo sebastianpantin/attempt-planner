@@ -44,6 +44,15 @@ pub fn single_changes(
     Ok(dto::single_changes(&request.to_rust()?).into_ts()?)
 }
 
+/// Plans the rest of the meet given the attempts taken so far.
+///
+/// Returns the plans with their chances given the meet so far, or every problem with the
+/// input. Throws only when the input does not have the expected shape.
+#[wasm_bindgen]
+pub fn replan(request: Ts<dto::ReplanRequest>) -> Result<Ts<dto::ReplanResponse>, JsError> {
+    Ok(dto::replan(&request.to_rust()?).into_ts()?)
+}
+
 fn joined_error(messages: impl Iterator<Item = String>) -> JsError {
     JsError::new(&messages.collect::<Vec<_>>().join("; "))
 }
