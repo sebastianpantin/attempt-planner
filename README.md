@@ -14,6 +14,7 @@ Choose openers and attempt jumps for a powerlifting meet by simulating the meet 
 - **Analytics.** Where the total lands, the chance of reaching any total, which lift the bomb-out risk comes from, how each attempt goes, a bad, normal and good day, and the single changes of one or two plates that improve the plan most, each applied with one click.
 - **Compare safer and bolder plans.** A chart of a whole family of plans, from conservative to aggressive, by bomb-out chance and average total, and a table of the best plan at each level of risk and for the goal. Any of them can be filled in with one click.
 - **Find the best plan.** A search for the openers and jumps with the best chance of reaching the goal, or the highest average total without a goal, optionally keeping the bomb-out chance under a cap.
+- **Meet day.** A phone-first view for the meet itself. After each attempt, enter the load and whether it was made; the rest of the meet is replanned for the same goal and bomb-out limit, with the next attempt, the chance of the goal, the bomb-out risk and the average total given the meet so far. See [Meet day](#meet-day).
 
 Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and every attempt after a made one must be heavier.
 
@@ -26,6 +27,18 @@ Plans follow the IPF attempt rules: at least the 20 kg bar, 2.5 kg steps, and ev
 - **Search.** Starts from the best plan in the tradeoff family, then changes one setting of one lift at a time and keeps any change that ranks higher, until a whole round changes nothing. It picks and reports plans on the same 20,000 meets, so its figures are slightly optimistic; precise mode re-checks a plan on more meets.
 
 The day form and make-rate numbers are inputs under "Advanced".
+
+### Meet day
+
+The meet day view starts from the plan as set up: the lifter, the expected maxes, the goal and the bomb-out limit. Attempts go in in meet order, squat, bench, then deadlift, and follow the IPF rules: 2.5 kg steps, at least the bar, never lighter than the attempt before and heavier after a make. The last one can be undone. They are kept in the browser's local storage, so a reload mid-meet loses nothing, and a service worker keeps the built page, so it works offline once loaded.
+
+After each attempt the planner replans everything left, the rest of this lift and the later lifts, on the same simulated days as the plan:
+
+- **Only results are evidence.** A simulated day stays when every attempt so far would have gone the same way on it, made or missed, technical misses included, and drops out otherwise. The loads come from the plan, so they only set where each day's make threshold has to lie. The days left are the model's days given the meet so far, so a made opener raises the chance of the goal and a missed one lowers it, through the shared day form for the later lifts too.
+- **Fresh days when few are left.** Below 2,000 agreeing days, a tenth of the 20,000, a chance near 50% would have a standard error over 1.1 points and the search would start to pick plans for their luck. The planner then draws 20,000 new days given the results: the shared and each lift's own day-form draws are weighted on a grid by how likely they make the attempts so far, as the backtest does, and the attempts still to come are rolled as for any day.
+- **Same search.** Finished attempts are fixed in each plan, so a finished lift counts its best (or a bomb-out) on every day, and the search changes only the attempts still to come, starting from the plan and the plan family.
+
+A replan takes about 15 ms, or 25 ms when the days are drawn afresh (`cargo run --release -p attempt-sim --example timings`).
 
 ### Estimating maxes from past meets
 
