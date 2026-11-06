@@ -423,6 +423,14 @@ details[open] > summary::before {
   font-size: 0.9rem;
 }
 
+.past-meets .field {
+  justify-items: start;
+}
+
+.past-meets .field .input {
+  width: 130px;
+}
+
 textarea {
   width: 100%;
   padding: 8px 12px;

@@ -132,6 +132,27 @@ it("estimates maxes from past meets", () => {
   expect(bench?.uncertainty).toBeGreaterThan(0);
 });
 
+it("expects less progress from a lifter with meets before the pasted ones", () => {
+  const { meets } = parsePastMeets(
+    "2025-03-15 180 190 -197.5 120 125 -130 220 235 245",
+  );
+  const squatMax = (meetsBefore: number | undefined) => {
+    const request = buildEstimateRequest(
+      EXAMPLE,
+      meets,
+      20_400,
+      CALIBRATIONS.any.typicalOpener,
+    );
+    if (meetsBefore === undefined) delete request.meetsBefore;
+    else request.meetsBefore = meetsBefore;
+    const reply = answer({ kind: "estimate", request });
+    if (reply.kind !== "estimated") throw new Error(JSON.stringify(reply));
+    return reply.estimate.lifts.squat?.expectedMaxKg ?? Number.NaN;
+  };
+  expect(squatMax(undefined)).toBe(squatMax(0));
+  expect(squatMax(9)).toBeLessThan(squatMax(0) - 5);
+});
+
 it("fails an estimate without attempts", () => {
   const reply = answer({
     kind: "estimate",
