@@ -1,8 +1,10 @@
+pub mod attempts;
 pub mod backtest;
 pub mod calibrate;
 pub mod data;
 pub mod fitted;
 pub mod history;
+pub mod likelihood;
 pub mod parallel;
 pub mod progress;
 pub mod stats;

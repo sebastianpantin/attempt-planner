@@ -13,8 +13,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use attempt_fit::backtest::{
-    BIN_EDGES, Backtest, LoadChoice, PAST_MISS_GROUPS, SCENARIOS, Score, Scores, backtest,
-    is_held_out,
+    BIN_EDGES, Backtest, PAST_MISS_GROUPS, SCENARIOS, Score, Scores, backtest, is_held_out,
 };
 use attempt_fit::calibrate::MakeRates;
 use attempt_fit::data::{Entry, Filter, raw_full_power_entries};
@@ -54,9 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .partition(|entry| run_backtest && is_held_out(&entry.lifter));
     let fitted = fit(&fitted_to)?;
     print_fit(&fitted);
+    println!("fitted in {:.1} s", started.elapsed().as_secs_f64());
     if run_backtest {
-        let (backtest, load_choices) = backtest(&fitted, &fitted_to, &held_out);
-        print_backtest(&backtest, &load_choices);
+        print_backtest(&backtest(&fitted, &held_out));
     }
     println!("took {:.1} s", started.elapsed().as_secs_f64());
     Ok(())
@@ -69,18 +68,18 @@ fn print_fit(fitted: &Fitted) {
         fitted.total_spread() * 100.0
     );
     let history = fitted.history;
-    let day_form = fitted.model().day_form;
+    let calibrated = fitted.calibrated_model().day_form;
     println!(
         "  meet to meet ({} pairs): day form {:.1}% (squat {:.1}%, bench {:.1}%, deadlift {:.1}%)",
         history.pairs,
-        day_form.spread * 100.0,
+        calibrated.spread * 100.0,
         history.spread.squat * 100.0,
         history.spread.bench * 100.0,
         history.spread.deadlift * 100.0
     );
     println!(
         "  so expected-max uncertainty {:.1}%",
-        day_form.max_uncertainty * 100.0
+        calibrated.max_uncertainty * 100.0
     );
     let [squat_bench, squat_deadlift, bench_deadlift] = history.correlations;
     println!(
@@ -110,26 +109,24 @@ fn print_fit(fitted: &Fitted) {
             params.technical_miss_chance * 100.0,
             params.opener_ratio * 100.0
         );
-        let (misses, kinds) = (fitted.opener_misses.get(lift), fitted.kinds.get(lift));
-        let params = kinds.params;
+    }
+    let attempts = fitted.attempts;
+    println!(
+        "fitted to the attempts of {} lifters' latest meets, log loss {:.4}",
+        attempts.lifters, attempts.log_loss
+    );
+    for lift in Lift::ALL {
+        let curve = attempts.model.curves.get(lift);
+        let choice = attempts.load_choices.get(lift);
+        let [a, b, c, d] = choice.log_shares.map(|share| share.exp() * 100.0);
         println!(
-            "  opener missed after a missed / made opener at the meet before: {:.1} / {:.1}%",
-            misses.after_miss * 100.0,
-            misses.after_make * 100.0
-        );
-        println!(
-            "  with prone lifters, predicted: {}",
-            rates(kinds.predicted)
-        );
-        println!(
-            "  {:.1}% of lifters prone, technical miss chance {:.1}% or {:.1}% when prone, \
-             steepness {:.1}, typical opener {:.1}%, spread {:.1}%",
-            params.prone_share * 100.0,
-            params.technical_miss_chance * 100.0,
-            params.prone_technical_miss_chance * 100.0,
-            params.steepness,
-            params.opener_ratio * 100.0,
-            params.spread * 100.0
+            "  {lift}: steepness {:.1}, technical miss chance {:.1}%, typical opener {:.1}%; 2nd \
+             at {a:.1}% / {b:.1}% and 3rd at {c:.1}% / {d:.1}% of the day max after a make / \
+             miss, give or take {:.1}%",
+            curve.steepness,
+            curve.technical_miss_chance * 100.0,
+            attempts.model.typical_opener.get(lift) * 100.0,
+            choice.spread * 100.0
         );
     }
 }
@@ -194,19 +191,11 @@ fn largest_difference(a: &Progress, b: &Progress) -> f64 {
         .fold(0.0, f64::max)
 }
 
-fn print_backtest(backtest: &Backtest, load_choices: &[LoadChoice; 2]) {
+fn print_backtest(backtest: &Backtest) {
     println!(
         "backtest: latest meet of {} held-out lifters, {} skipped",
         backtest.meets, backtest.skipped
     );
-    for (name, choice) in ["alike", "prone share"].iter().zip(load_choices) {
-        let [a, b, c, d] = choice.log_shares.map(|share| share.exp() * 100.0);
-        println!(
-            "  {name}: 2nd at {a:.1}% / {b:.1}% and 3rd at {c:.1}% / {d:.1}% of the day max after a \
-             make / miss, give or take {:.1}%",
-            choice.spread * 100.0
-        );
-    }
     print_score("share made, any load", &backtest.baseline);
     for (scenario, scores) in SCENARIOS.iter().zip(&backtest.scenarios) {
         print_score(scenario.name, &scores.all);

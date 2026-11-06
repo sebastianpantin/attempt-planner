@@ -428,39 +428,6 @@ impl GainsSince {
     }
 }
 
-/// The log of the chance of a lift's makes and misses at the past meets of `input`, for a
-/// lifter with this curve whose level follows `estimate`: for example to compare kinds of
-/// lifter. `None` when the lift has no estimate.
-pub fn log_chance_of_past_meets(
-    input: &MaxEstimateInput,
-    estimate: &MaxEstimate,
-    lift: Lift,
-    curve: &MakeRateCurve,
-) -> Option<f64> {
-    let expected_kg = estimate.lifts.get(lift).as_ref()?.expected_max_kg;
-    let gains = GainsSince::new(&PROGRESS, input);
-    // The estimate reports the typical yearly gain and the lifter's own together.
-    let own_gain = estimate.yearly_progress.ln_1p() - PROGRESS.step(gains.meets_done).per_year;
-    Some(
-        input
-            .meets
-            .iter()
-            .enumerate()
-            .filter(|(_, meet)| !meet.attempts.get(lift).is_empty())
-            .map(|(index, meet)| {
-                let level_kg = expected_kg * (-gains.since(index, own_gain)).exp();
-                let chance = chance_of_outcomes(
-                    curve,
-                    meet.attempts.get(lift),
-                    level_kg,
-                    input.day_form_spread,
-                );
-                chance.max(f64::MIN_POSITIVE).ln()
-            })
-            .sum(),
-    )
-}
-
 /// The expected maxes on `on_day` that best explain the past meets, with how sure the
 /// estimate is.
 pub fn estimate_maxes(input: &MaxEstimateInput) -> Result<MaxEstimate, Vec<EstimateProblem>> {
@@ -770,22 +737,6 @@ mod tests {
         assert!((veteran_gains.since(0, 0.0) - veteran_since).abs() < 1e-12);
         let squat = |estimate: &MaxEstimate| estimate.lifts.squat.unwrap().expected_max_kg;
         assert!(squat(&veteran) < squat(&new), "{veteran:?} {new:?}");
-    }
-
-    #[test]
-    fn past_meets_are_likelier_for_the_curve_they_were_drawn_from() {
-        let (meets, _) = simulated_meets(levels(), 0.0, 6);
-        let input = input(meets, 700);
-        let estimate = estimate_maxes(&input).unwrap();
-        let log_chance = |technical_miss_chance| {
-            let curve = MakeRateCurve {
-                technical_miss_chance,
-                ..*input.curves.get(Lift::Bench)
-            };
-            log_chance_of_past_meets(&input, &estimate, Lift::Bench, &curve).unwrap()
-        };
-        let drawn = input.curves.bench.technical_miss_chance;
-        assert!(log_chance(drawn) > log_chance(0.5), "{}", log_chance(drawn));
     }
 
     #[test]

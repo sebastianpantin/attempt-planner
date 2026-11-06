@@ -95,25 +95,36 @@ It takes a few seconds. This uses data from the OpenPowerlifting project, https:
 cargo run --release -p attempt-fit -- --federation IPF --backtest path/to/openpowerlifting.csv
 ```
 
-It takes about two minutes. Lower log loss is better. On IPF meets up to October 2026 (9,044 lifters, 81,396 attempts, 78% made):
+It first fits the curves to real attempts (below), then scores the refit curves. The page-curve column is the same backtest before the refit, scoring the calibrated curves with one load choice for all lifts. It takes about two and a half minutes. Lower log loss is better. On IPF meets up to October 2026 (9,044 lifters, 81,396 attempts, 78% made):
 
-| Chance of each attempt from | Mean predicted | Log loss |
+| Chance of each attempt from | Page curves | Refit curves |
 | --- | --- | --- |
-| The share of that attempt made, after a make or a miss, whatever the load | 78% | 0.447 |
-| The model, with maxes from past meets | 75% | 0.610 |
-| The model, with maxes from past meets and the opener the lifter chose | 77% | 0.539 |
-| As above, with a share of lifters prone to misses whatever the load | 77% | 0.520 |
-| As above, each lifter's share updated by their past misses | 77% | 0.519 |
-| The model, with the opener, and the 2nd and 3rd attempts the lifter chose | 79% | 0.489 |
-| As above, with a share of prone lifters | 79% | 0.486 |
+| The share of that attempt made, after a make or a miss, whatever the load | 0.447 | 0.447 |
+| The model, with maxes from past meets | 0.610 | 0.553 |
+| The model, with maxes from past meets and the opener the lifter chose | 0.539 | 0.499 |
+| The model, with the opener, and the 2nd and 3rd attempts the lifter chose | 0.489 | 0.454 |
 
-Expecting typical progress since the last meet, and using every past meet rather than the latest six, took the log loss from past meets from 0.700 to 0.610, and with the opener from 0.577 to 0.539; with the chosen attempts it went from 0.497 to 0.489. Still, with maxes from past meets, even with the opener, the model is too pessimistic: attempts it gives under 50% are made 55–60% of the time. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 52–63%, but lifters make it 73–76% of the time.
+With the page's curves and maxes from past meets, even with the opener, the model is too pessimistic: attempts it gives under 50% are made 55–60% of the time. The largest gap is a repeat after a miss: the model reads a missed attempt as a bad day and gives the repeat 52–63%, but lifters make it 73–76% of the time.
 
-Misses do run in lifters. A lifter who missed their opener misses the next meet's opener more often: 13.7% against 8.7% on the squat, 9.2% against 5.9% on the bench and 7.7% against 3.9% on the deadlift. Fitting a share of lifters prone to misses whatever the load to that fixes the squat opener (90.6% predicted against 88.9% made, from 98%), but it gains little in the backtest. The fit puts every repeated miss down to being prone, though other habits repeat too, such as always opening heavy, so it likely overstates the share.
+Most of the gap is that lifters choose their 2nd and 3rd attempts knowing how the day is going. Taking each chosen attempt as evidence of the day max, as a typical share of it give or take a spread, brings the predictions in line with what lifters make. A share of lifters prone to misses whatever the load, which an earlier version fitted to how often missed openers repeat, gained nothing once chosen attempts were evidence, and is gone.
 
-Most of the gap is that lifters choose their 2nd and 3rd attempts knowing how the day is going. Taking each chosen attempt as evidence of the day max, as a typical share of it give or take a spread fitted to the other lifters, brings the predictions in line with what lifters make. Lifters take their 2nd attempt at about 97% of that day's max and their 3rd at 97% after a make and 102% after a miss, give or take only 2%. With that, a share of miss-prone lifters no longer helps. What is left is overconfidence at both ends: attempts given 98% or more are made 95% of the time.
+#### Curves fitted to real attempts
 
-So the curve and day form hold up for a plan made before the meet. The lesson for the meet itself is that how an attempt moves says a lot about the day.
+Calibrating to make rates assumes lifters follow typical jumps. `attempt-fit` also fits each lift's steepness, technical-miss chance and load choice to the likelihood of the real attempts of about 2,900 fitting lifters' latest meets, scored as the backtest scores them: maxes from past meets and the opener, and each chosen 2nd and 3rd attempt as evidence of the day max. Day form and the correlation between lifts stay as measured from consecutive meets, and the uncertainty of the expected max stays at 3.1%, the calibrated spread of the day max less day form. It re-estimates the maxes with each fit until the log loss settles.
+
+The refit beats the page's curves on log loss, 0.454 against 0.489 with chosen attempts, but not the load-blind baseline, and its calibration is off:
+
+| Predicted, with chosen attempts | Attempts | Made | Mean predicted |
+| --- | --- | --- | --- |
+| Under 50% | 7,150 | 45.3% | 37.8% |
+| 50–70% | 15,123 | 60.0% | 60.7% |
+| 70–80% | 10,636 | 71.6% | 74.9% |
+| 80–90% | 30,051 | 87.1% | 85.7% |
+| 90–95% | 11,310 | 93.7% | 92.5% |
+| 95–98% | 6,133 | 95.7% | 96.4% |
+| 98% or more | 993 | 96.0% | 98.5% |
+
+Its curves are much softer than the page's: steepness 22 for the squat, 33 for the bench and 28 for the deadlift, against 56, 94 and 109. The soft curves likely soak up what the model leaves out, such as lifters who choose loads for reasons other than the day, so the page keeps the calibrated curves for now.
 
 The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 

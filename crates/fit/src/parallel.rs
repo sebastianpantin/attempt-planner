@@ -34,6 +34,37 @@ pub fn in_parallel<T: Sync, R: Default + Send + for<'a> AddAssign<&'a R>>(
     })
 }
 
+/// The results of `work` on `items` that are `Some`, in order, worked out on every core
+/// like [`in_parallel`].
+pub fn filter_map_in_parallel<T: Sync, R: Send>(
+    items: &[T],
+    work: impl Fn(&T) -> Option<R> + Sync,
+) -> Vec<R> {
+    let next = AtomicUsize::new(0);
+    let mut found: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads())
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut found = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(index) else {
+                            return found;
+                        };
+                        found.extend(work(item).map(|result| (index, result)));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("a worker thread panicked"))
+            .collect()
+    });
+    found.sort_by_key(|(index, _)| *index);
+    found.into_iter().map(|(_, result)| result).collect()
+}
+
 /// `work` on each of a few items, each on a thread of its own, in order.
 pub fn map_in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
     std::thread::scope(|scope| {
@@ -64,6 +95,13 @@ mod tests {
             }
         }
         assert_eq!(in_parallel(&items, |&item| Sum(item)).0, 500_500);
+    }
+
+    #[test]
+    fn keeps_the_results_that_are_some_in_order() {
+        let items: Vec<u64> = (1..=1_000).collect();
+        let even = filter_map_in_parallel(&items, |&item| (item % 2 == 0).then_some(item));
+        assert_eq!(even, (1..=500).map(|i| i * 2).collect::<Vec<_>>());
     }
 
     #[test]

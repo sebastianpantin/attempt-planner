@@ -9,7 +9,7 @@
 
 use attempt_sim::past_meets::{EXPERIENCE_GROUPS, Progress, Step, years_between};
 
-use crate::backtest::Meet;
+use crate::attempts::Meet;
 use crate::history::bests;
 
 /// The caps on the years between meets tried, every two weeks or so up to 3 years.
