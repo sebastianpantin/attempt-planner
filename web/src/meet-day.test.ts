@@ -5,7 +5,6 @@ import { buildSearchRequest } from "./inputs.ts";
 import {
   afterNext,
   basis,
-  bests,
   bombedOut,
   describeSetup,
   describeTaken,
@@ -130,13 +129,8 @@ describe("attempts in meet order", () => {
 });
 
 describe("the meet so far", () => {
-  it("keeps each lift's best and notices a bomb-out", () => {
+  it("notices a bomb-out", () => {
     const taken = [...squats, missed(120), missed(120), missed(120)];
-    expect(bests(taken)).toEqual({
-      squat: 190,
-      bench: undefined,
-      deadlift: undefined,
-    });
     expect(bombedOut(taken)).toEqual(["bench"]);
     expect(bombedOut(squats)).toEqual([]);
   });

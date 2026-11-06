@@ -225,10 +225,9 @@ impl Search {
             }
             let current = *self.best.plans.get(lift);
             let expected_max = self.days.lifter().lifts.get(lift).expected_max;
-            let open = !self.taken.fixes(lift, setting);
             let mut improved = false;
-            for weight in setting.values(expected_max).filter(|_| open) {
-                let candidate = setting.with(current, weight);
+            for weight in setting.values(expected_max) {
+                let candidate = self.taken.pin(lift, setting.with(current, weight));
                 if candidate == current || !candidate.problems().is_empty() {
                     continue;
                 }

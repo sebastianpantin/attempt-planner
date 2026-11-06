@@ -76,7 +76,7 @@ fn softplus(x: f64) -> f64 {
 }
 
 /// `ln(e^a + e^b)` without overflow, minus infinity when both are.
-pub(crate) fn ln_add(a: f64, b: f64) -> f64 {
+fn ln_add(a: f64, b: f64) -> f64 {
     let high = a.max(b);
     if high == f64::NEG_INFINITY {
         return high;

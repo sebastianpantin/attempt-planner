@@ -8,14 +8,13 @@ import type {
   SearchRequest,
   TakenAttempt,
 } from "../pkg/attempt_sim_wasm.js";
+import { BAR_KG, PLATE_STEP_KG } from "./attempt-scaling.ts";
 import * as format from "./format.ts";
 import { LIFT_NAMES } from "./format.ts";
 import { LIFTS, perLift } from "./inputs.ts";
 
 export const ATTEMPTS_PER_LIFT = 3;
 export const ATTEMPTS = LIFTS.length * ATTEMPTS_PER_LIFT;
-const BAR_KG = 20;
-const PLATE_KG = 2.5;
 const HEAVIEST_KG = 1000;
 
 /** The plan, lifter and goal the meet started from. Later edits to the plan leave it alone. */
@@ -89,17 +88,21 @@ export const byLift = (taken: TakenAttempt[]): PerLift<TakenAttempt[]> =>
 export function lightestNextKg(taken: TakenAttempt[]): number {
   const before = taken.at(-1);
   if (!before || taken.length % ATTEMPTS_PER_LIFT === 0) return BAR_KG;
-  return before.weightKg + (before.made ? PLATE_KG : 0);
+  return before.weightKg + (before.made ? PLATE_STEP_KG : 0);
 }
 
-/** Why `kg` cannot be the next attempt's load, or `undefined` when it can. */
+/**
+ * Why `kg` cannot be the next attempt's load, or `undefined` when it can. The engine
+ * checks the same rules, but a load is checked here before it is saved, so a slip on the
+ * stepper never becomes part of the meet.
+ */
 export function loadProblem(
   kg: number,
   taken: TakenAttempt[],
 ): string | undefined {
   if (!Number.isFinite(kg)) return "Enter the load in kg.";
-  if (Math.round(kg * 1000) % (PLATE_KG * 1000) !== 0) {
-    return `Loads go up in ${PLATE_KG} kg steps.`;
+  if (Math.round(kg * 1000) % (PLATE_STEP_KG * 1000) !== 0) {
+    return `Loads go up in ${PLATE_STEP_KG} kg steps.`;
   }
   if (kg > HEAVIEST_KG) return `At most ${format.kg(HEAVIEST_KG)}.`;
   const lightest = lightestNextKg(taken);
@@ -142,15 +145,6 @@ export function afterNext(
   const missed = format.kg(weightKg + jumps.afterMissKg);
   return `If made, then ${made}. If missed, then ${missed}.`;
 }
-
-/** The best made attempt of each finished or started lift, `undefined` for none yet. */
-export const bests = (taken: TakenAttempt[]): PerLift<number | undefined> => {
-  const lifts = byLift(taken);
-  return perLift((lift) => {
-    const made = lifts[lift].filter((a) => a.made).map((a) => a.weightKg);
-    return made.length > 0 ? Math.max(...made) : undefined;
-  });
-};
 
 /** Lifts with all three attempts missed. */
 export const bombedOut = (taken: TakenAttempt[]): Lift[] => {

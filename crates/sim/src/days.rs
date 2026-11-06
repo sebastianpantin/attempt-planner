@@ -115,18 +115,20 @@ impl LiftDays {
         }
     }
 
-    /// The days whose entry in `keep` is set, in order.
-    pub(crate) fn select(&self, keep: &[bool]) -> Self {
-        fn kept<T: Copy>(column: &[T], keep: &[bool]) -> Vec<T> {
-            column
-                .iter()
-                .zip(keep)
-                .filter_map(|(&value, &keep)| keep.then_some(value))
-                .collect()
+    /// The `count` days whose entry in `keep` is set, in order.
+    pub(crate) fn select(&self, keep: &[bool], count: usize) -> Self {
+        fn kept<T: Copy>(column: &[T], keep: &[bool], count: usize) -> Vec<T> {
+            let mut kept = Vec::with_capacity(count);
+            let values = column.iter().zip(keep);
+            kept.extend(values.filter_map(|(&value, &keep)| keep.then_some(value)));
+            kept
         }
         Self {
-            missed_from: self.missed_from.each_ref().map(|column| kept(column, keep)),
-            technical: kept(&self.technical, keep),
+            missed_from: self
+                .missed_from
+                .each_ref()
+                .map(|column| kept(column, keep, count)),
+            technical: kept(&self.technical, keep, count),
         }
     }
 

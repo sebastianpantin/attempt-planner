@@ -326,18 +326,19 @@ impl MeetDays {
     }
 
     /// The days on which every attempt in `taken` goes as it went, each lift's attempts in
-    /// order. Every plan that takes those attempts goes the same way up to there on each of
-    /// these days, so scoring it on them gives its chances given the meet so far.
-    pub(crate) fn agreeing(&self, taken: &PerLift<&[Attempt]>) -> Self {
+    /// order, or `None` when fewer than `at_least` do. Every plan that takes those attempts
+    /// goes the same way up to there on each of these days, so scoring it on them gives its
+    /// chances given the meet so far.
+    pub(crate) fn agreeing(&self, taken: &PerLift<&[Attempt]>, at_least: usize) -> Option<Self> {
         let mut agrees = vec![true; self.len()];
         for (lift, days) in self.lifts.iter() {
             days.rule_out(taken.get(lift), &mut agrees);
         }
-        Self::from_lifts(
-            self.lifts.map(|_, days| days.select(&agrees)),
-            self.lifter,
-            self.seed,
-        )
+        let kept = agrees.iter().filter(|&&agrees| agrees).count();
+        (kept >= at_least).then(|| {
+            let lifts = self.lifts.map(|_, days| days.select(&agrees, kept));
+            Self::from_lifts(lifts, self.lifter, self.seed)
+        })
     }
 
     /// Like [`new`](Self::new), but hands back the days from the last call on this thread
@@ -392,6 +393,10 @@ impl MeetDays {
 
     pub(crate) fn len(&self) -> usize {
         self.simulations as usize
+    }
+
+    pub(crate) fn simulations(&self) -> u32 {
+        self.simulations
     }
 
     pub fn evaluate(

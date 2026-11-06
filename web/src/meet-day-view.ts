@@ -51,6 +51,8 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
   const loadProblemText = byId("meet-load-problem");
   const progress = byId("meet-progress");
   let meet = loadMeet(localStorage);
+  /** The replan request whose answer is on screen, so reopening the view does not redo it. */
+  let shownFor: string | undefined;
   /** Whether the lifter changed the load since the replan last filled it in. */
   let loadEdited = false;
 
@@ -104,8 +106,10 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
         ? `Three misses on the ${format.listOf(bombs.map((lift) => LIFT_NAMES[lift].full.toLowerCase()))}: no total at this meet.`
         : "";
     renderLog();
+    const request = replanRequest(meet);
+    if (JSON.stringify(request) === shownFor) return;
     view.setAttribute("aria-busy", "true");
-    submitReplan(replanRequest(meet));
+    submitReplan(request);
   }
 
   function renderLog() {
@@ -120,7 +124,7 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
           const cell = row.insertCell();
           const attempt = lifts[lift][index];
           if (!attempt) continue;
-          cell.className = attempt.made ? "made" : "missed";
+          cell.className = attempt.made ? "tag make" : "tag miss";
           cell.append(
             element("span", "", attempt.made ? "✓ " : "✗ "),
             format.weight(attempt.weightKg),
@@ -176,12 +180,15 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
   const submitReplan = simulationWorker("replan", {
     started: () => {},
     finished(reply, request: ReplanRequest) {
-      if (!meet || request.taken.length !== meet.taken.length) return;
+      if (!meet) return;
       view.removeAttribute("aria-busy");
       if ("message" in reply) {
-        status(`The replan failed: ${reply.message}`);
+        const failure = `The replan failed: ${reply.message}`;
+        byId("meet-problems").replaceChildren(element("li", "", failure));
+        status(failure);
         return;
       }
+      shownFor = JSON.stringify(request);
       showReplan(reply);
     },
   });
@@ -190,6 +197,7 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
     meet = next;
     saveMeet(localStorage, meet);
     loadEdited = false;
+    shownFor = undefined;
     render();
   }
 
@@ -227,15 +235,6 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
   loadInput.addEventListener("input", () => {
     loadEdited = true;
     setLoadProblem(undefined);
-  });
-  view.addEventListener("click", (event) => {
-    const stepButton = (event.target as Element).closest<HTMLButtonElement>(
-      "button[data-meet-step]",
-    );
-    if (!stepButton) return;
-    if (stepButton.dataset["meetStep"] === "1") loadInput.stepUp();
-    else loadInput.stepDown();
-    loadInput.dispatchEvent(new Event("input", { bubbles: true }));
   });
   button("undo-attempt").addEventListener("click", () => {
     if (!meet) return;

@@ -11,12 +11,12 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use crate::days::LiftDays;
 use crate::evaluate::{InputProblem, Lifter, MeetDays, draw_attempts};
 use crate::lift::{Lift, PerLift};
-use crate::model::ln_add;
+use crate::normal::normal_grid;
 use crate::plan::{Jumps, LiftPlan, PlanStep};
 use crate::rules::{
     ATTEMPTS_PER_LIFT, Attempt, PLATE_STEP, RuleViolation, Weight, check_progression,
 };
-use crate::search::{Found, Search, SearchStart, Setting};
+use crate::search::{Found, Search, SearchStart};
 
 /// Below this many simulated days that agree with the meet so far, the days are drawn
 /// afresh. A chance near 50% on 2,000 days has a standard error of about 1.1 points, three
@@ -81,18 +81,16 @@ pub fn replan(input: &MeetDayInput) -> Result<Replan, Vec<InputProblem>> {
             return Err(problems);
         }
     };
+    let lifts = taken.lifts();
     let (days, redrawn) = if input.taken.is_empty() {
         (days, false)
+    } else if let Some(agreeing) = days.agreeing(&lifts, MIN_AGREEING_DAYS) {
+        (Arc::new(agreeing), false)
     } else {
-        let agreeing = days.agreeing(&taken.lifts());
-        if agreeing.len() >= MIN_AGREEING_DAYS {
-            (Arc::new(agreeing), false)
-        } else {
-            let redrawn = redraw(&input.lifter, &taken.lifts(), input.simulations, input.seed);
-            (Arc::new(redrawn), true)
-        }
+        let redrawn = redraw(&input.lifter, &lifts, input.simulations, input.seed);
+        (Arc::new(redrawn), true)
     };
-    let meets = u32::try_from(days.len()).expect("at most MAX_SIMULATIONS days");
+    let meets = days.simulations();
     let start = SearchStart {
         plans: input.plans,
         family_best: None,
@@ -155,56 +153,35 @@ impl Taken {
     /// `plan` changed to take the lift's attempts so far. A jump the meet can no longer
     /// take, after the result that did not happen, becomes the smallest valid one, so
     /// plans that differ only there are the same plan.
-    fn pin(&self, lift: Lift, mut plan: LiftPlan) -> LiftPlan {
+    pub(crate) fn pin(&self, lift: Lift, mut plan: LiftPlan) -> LiftPlan {
         let taken = self.0.get(lift);
         if let Some(opener) = taken.first() {
             plan.opener = opener.weight;
         }
+        let unused = Jumps {
+            after_make: PLATE_STEP,
+            after_miss: Weight::ZERO,
+        };
         for (index, jumps) in [&mut plan.second, &mut plan.third].into_iter().enumerate() {
             let Some(before) = taken.get(index) else {
                 break;
             };
-            let unused = Jumps {
-                after_make: PLATE_STEP,
-                after_miss: Weight::ZERO,
-            };
-            let to =
-                |after: &Attempt| Weight::from_grams(after.weight.grams() - before.weight.grams());
-            let next = taken.get(index + 1);
-            *jumps = if before.made {
-                Jumps {
-                    after_make: next.map_or(jumps.after_make, to),
-                    ..unused
-                }
+            let mut pinned = unused;
+            let (slot, planned) = if before.made {
+                (&mut pinned.after_make, jumps.after_make)
             } else {
-                Jumps {
-                    after_miss: next.map_or(jumps.after_miss, to),
-                    ..unused
-                }
+                (&mut pinned.after_miss, jumps.after_miss)
             };
+            *slot = taken.get(index + 1).map_or(planned, |after| {
+                Weight::from_grams(after.weight.grams() - before.weight.grams())
+            });
+            *jumps = pinned;
         }
         plan
     }
 
     pub(crate) fn pin_all(&self, plans: &PerLift<LiftPlan>) -> PerLift<LiftPlan> {
         plans.map(|lift, &plan| self.pin(lift, plan))
-    }
-
-    /// Whether the meet has already decided `setting` for `lift`: it belongs to an attempt
-    /// taken, or follows a result that did not happen.
-    pub(crate) fn fixes(&self, lift: Lift, setting: Setting) -> bool {
-        let taken = self.0.get(lift);
-        let decided = |attempt: usize, after_make: bool| {
-            taken.len() > attempt
-                || attempt > 0 && taken.get(attempt - 1).is_some_and(|a| a.made != after_make)
-        };
-        match setting {
-            Setting::Opener => decided(0, true),
-            Setting::SecondAfterMake => decided(1, true),
-            Setting::SecondAfterMiss => decided(1, false),
-            Setting::ThirdAfterMake => decided(2, true),
-            Setting::ThirdAfterMiss => decided(2, false),
-        }
     }
 
     /// The first attempt not yet taken, with its weight in `plans`.
@@ -226,10 +203,9 @@ impl Taken {
     }
 }
 
-/// Standard normal draws are taken from a grid this far apart, up to [`GRID_REACH`] either
-/// side of 0. Fine enough that a day max moves by well under a plate across one step.
-const GRID_STEP: f64 = 0.05;
-const GRID_REACH: f64 = 7.0;
+/// Standard normal draws are taken from a grid of this many points from −6 to 6, 0.05
+/// apart: fine enough that a day max moves by well under a plate across one step.
+const GRID_POINTS: usize = 241;
 
 /// `simulations` days drawn from the model given the attempts in `taken`.
 ///
@@ -242,23 +218,23 @@ const GRID_REACH: f64 = 7.0;
 /// rolled as for any day; those taken go as they went, a miss being technical as often as
 /// it would be on that day max.
 fn redraw(lifter: &Lifter, taken: &PerLift<&[Attempt]>, simulations: u32, seed: u64) -> MeetDays {
-    let nodes: Vec<f64> = (0..)
-        .map(|index| f64::from(index) * GRID_STEP - GRID_REACH)
-        .take_while(|&z| z <= GRID_REACH + GRID_STEP / 2.0)
-        .collect();
+    let grid = normal_grid(GRID_POINTS, 6.0);
+    let (nodes, ln_prior): (Vec<f64>, Vec<f64>) =
+        grid.iter().map(|&(z, weight)| (z, weight.ln())).unzip();
     let n = nodes.len();
-    let ln_prior = |z: f64| -z * z / 2.0;
+    let step = nodes[1] - nodes[0];
     let draws = lifter.day_form.draw_weights();
     let ln_own: PerLift<Option<Vec<f64>>> = lifter.lifts.map(|lift, model| {
         let taken = *taken.get(lift);
         (!taken.is_empty()).then(|| {
             let expected_kg = model.expected_max.kg();
+            let ln_prior = &ln_prior;
             nodes
                 .iter()
                 .flat_map(|&shared| {
-                    nodes.iter().map(move |&own| {
+                    nodes.iter().zip(ln_prior).map(move |(&own, &ln_prior)| {
                         let day_max_kg = draws.day_max(expected_kg, shared, own);
-                        taken.iter().fold(ln_prior(own), |sum, attempt| {
+                        taken.iter().fold(ln_prior, |sum, attempt| {
                             let load_kg = attempt.weight.kg();
                             sum + model
                                 .curve
@@ -272,11 +248,8 @@ fn redraw(lifter: &Lifter, taken: &PerLift<&[Attempt]>, simulations: u32, seed: 
     let ln_shared: Vec<f64> = (0..n)
         .map(|i| {
             let own = ln_own.iter().filter_map(|(_, rows)| rows.as_ref());
-            own.fold(ln_prior(nodes[i]), |sum, rows| {
-                sum + rows[i * n..(i + 1) * n]
-                    .iter()
-                    .copied()
-                    .fold(f64::NEG_INFINITY, ln_add)
+            own.fold(ln_prior[i], |sum, rows| {
+                sum + ln_sum(&rows[i * n..(i + 1) * n])
             })
         })
         .collect();
@@ -288,7 +261,7 @@ fn redraw(lifter: &Lifter, taken: &PerLift<&[Attempt]>, simulations: u32, seed: 
 
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let jittered = |rng: &mut Xoshiro256PlusPlus, index: usize| {
-        nodes[index] + GRID_STEP * (rng.random::<f64>() - 0.5)
+        nodes[index] + step * (rng.random::<f64>() - 0.5)
     };
     let mut lifts = PerLift::from_fn(|_| LiftDays::with_capacity(simulations as usize));
     for _ in 0..simulations {
@@ -305,11 +278,13 @@ fn redraw(lifter: &Lifter, taken: &PerLift<&[Attempt]>, simulations: u32, seed: 
             let day_max_kg = draws.day_max(model.expected_max.kg(), shared, own);
             let (mut thresholds_kg, mut technical) =
                 draw_attempts(&mut rng, &model.curve, day_max_kg);
+            let curve = &model.curve;
             for (index, attempt) in taken.get(lift).iter().enumerate() {
-                let curve = &model.curve;
-                let ln_missed = curve.ln_result_chance(attempt.weight.kg(), day_max_kg, false);
-                let technical_share = (curve.technical_miss_chance.ln() - ln_missed).exp();
-                technical[index] = !attempt.made && rng.random::<f64>() < technical_share;
+                technical[index] = !attempt.made && {
+                    let ln_missed = curve.ln_result_chance(attempt.weight.kg(), day_max_kg, false);
+                    let technical_share = (curve.technical_miss_chance.ln() - ln_missed).exp();
+                    rng.random::<f64>() < technical_share
+                };
                 thresholds_kg[index] = if attempt.made {
                     f64::INFINITY
                 } else {
@@ -320,6 +295,20 @@ fn redraw(lifter: &Lifter, taken: &PerLift<&[Attempt]>, simulations: u32, seed: 
         }
     }
     MeetDays::from_lifts(lifts, *lifter, seed)
+}
+
+/// `ln` of the sum of weights given as logarithms, without overflow.
+fn ln_sum(ln_weights: &[f64]) -> f64 {
+    let highest = ln_weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if highest == f64::NEG_INFINITY {
+        return highest;
+    }
+    highest
+        + ln_weights
+            .iter()
+            .map(|&w| (w - highest).exp())
+            .sum::<f64>()
+            .ln()
 }
 
 /// The running sums of weights given as logarithms, scaled so the largest weight is 1.
@@ -477,7 +466,8 @@ mod tests {
         let replan = replan(&input(taken.clone())).unwrap();
         let evaluation = MeetDays::new(lifter(), 20_000, 7)
             .unwrap()
-            .agreeing(&Taken::new(&taken).unwrap().lifts())
+            .agreeing(&Taken::new(&taken).unwrap().lifts(), 0)
+            .unwrap()
             .evaluate(&replan.found.plans, Some(kg(550.0)))
             .unwrap();
         assert_eq!(evaluation.lifts.squat.make_probability, 1.0);
@@ -529,7 +519,8 @@ mod tests {
         let taken = Taken::new(&[missed(195.0)]).unwrap();
         let filtered = MeetDays::new(lifter(), 200_000, 3)
             .unwrap()
-            .agreeing(&taken.lifts());
+            .agreeing(&taken.lifts(), 0)
+            .unwrap();
         let redrawn = redraw(&lifter(), &taken.lifts(), 200_000, 4);
         let evaluate = |days: &MeetDays| {
             days.evaluate(&taken.pin_all(&plans()), Some(kg(550.0)))
@@ -580,12 +571,16 @@ mod tests {
     }
 
     #[test]
-    fn a_taken_attempt_fixes_its_settings_and_the_branch_not_taken() {
+    fn pinning_keeps_the_attempts_taken_and_the_jumps_still_to_come() {
         let taken = Taken::new(&[made(180.0)]).unwrap();
-        let fixed = |setting| taken.fixes(Lift::Squat, setting);
-        assert!(fixed(Setting::Opener) && fixed(Setting::SecondAfterMiss));
-        assert!(!fixed(Setting::SecondAfterMake) && !fixed(Setting::ThirdAfterMiss));
-        assert!(!taken.fixes(Lift::Bench, Setting::Opener));
+        let mut plan = plans().squat;
+        plan.second.after_miss = kg(5.0);
+        let pinned = taken.pin(Lift::Squat, plan);
+        assert_eq!(pinned.opener, kg(180.0));
+        assert_eq!(pinned.second.after_make, plan.second.after_make);
+        assert_eq!(pinned.second.after_miss, kg(0.0));
+        assert_eq!(pinned.third, plan.third);
+        assert_eq!(taken.pin(Lift::Bench, plans().bench), plans().bench);
     }
 
     #[test]

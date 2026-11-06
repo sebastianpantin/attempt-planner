@@ -777,7 +777,7 @@ compareButton.addEventListener("click", () => {
   if (!tradeoff.hidden) tradeoff.scrollIntoView({ block: "start" });
 });
 
-form.addEventListener("click", (event) => {
+document.addEventListener("click", (event) => {
   const button = (event.target as Element).closest<HTMLButtonElement>(
     "button[data-step]",
   );

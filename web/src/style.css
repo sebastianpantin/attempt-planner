@@ -682,10 +682,15 @@ textarea {
 .problems {
   margin: 10px 0 0;
   padding-left: 1.25rem;
+}
+
+.problems,
+.problem-text {
   color: var(--problem);
 }
 
-.problems:empty {
+.problems:empty,
+.problem-text:empty {
   display: none;
 }
 
@@ -1324,12 +1329,7 @@ body[data-view="meet"] #summary-bar {
 
 .problem-text {
   margin: 0;
-  color: var(--problem);
   font-size: 0.9rem;
-}
-
-.problem-text:empty {
-  display: none;
 }
 
 .meet-results {
@@ -1367,14 +1367,4 @@ body[data-view="meet"] #summary-bar {
 
 .meet-log tbody th {
   font-weight: 500;
-}
-
-.meet-log .made {
-  color: var(--make);
-  font-weight: 600;
-}
-
-.meet-log .missed {
-  color: var(--miss);
-  font-weight: 600;
 }
