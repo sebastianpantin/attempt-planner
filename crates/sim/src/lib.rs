@@ -1,6 +1,7 @@
 mod days;
 pub mod evaluate;
 pub mod lift;
+pub mod meet_day;
 pub mod minimize;
 pub mod model;
 pub mod normal;

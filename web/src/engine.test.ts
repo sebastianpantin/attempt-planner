@@ -10,6 +10,7 @@ import {
   buildTradeoffRequest,
   type Swept,
 } from "./inputs.ts";
+import { replanRequest, startMeet, take } from "./meet-day.ts";
 import { buildEstimateRequest, parsePastMeets } from "./past-meets.ts";
 
 beforeAll(() => {
@@ -192,4 +193,25 @@ it("reports the spread of totals and each lift's attempt paths", () => {
   expect(share).toBeCloseTo(1, 9);
   expect(lifts.squat.paths).toHaveLength(8);
   expect(lifts.squat.attemptMakeProbabilities[0]).toBeGreaterThan(0.9);
+});
+
+it("replans the example meet after the squat opener", () => {
+  const meet = startMeet(buildSearchRequest(EXAMPLE));
+  const goalChance = (taken: { weightKg: number; made: boolean }[]) => {
+    const reply = answer({
+      kind: "replan",
+      request: replanRequest({ ...meet, taken }),
+    });
+    if (reply.kind !== "replanned") throw new Error(JSON.stringify(reply));
+    return { chance: reply.result.goalProbability ?? 0, next: reply.next };
+  };
+  const opener = meet.setup.plans.squat.openerKg;
+  const before = goalChance([]);
+  const made = goalChance(take(meet, { weightKg: opener, made: true }).taken);
+  const missed = goalChance([{ weightKg: opener, made: false }]);
+  expect(before.next).toEqual({ lift: "squat", attempt: 1, weightKg: opener });
+  expect(made.chance).toBeGreaterThan(before.chance);
+  expect(missed.chance).toBeLessThan(before.chance);
+  expect(made.next?.attempt).toBe(2);
+  expect(made.next?.weightKg).toBeGreaterThan(opener);
 });

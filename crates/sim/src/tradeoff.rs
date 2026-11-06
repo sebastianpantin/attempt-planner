@@ -4,6 +4,7 @@ use std::ops::RangeInclusive;
 use crate::days::{StepPlan, goal_steps, record_rows};
 use crate::evaluate::{InputProblem, LiftModel, Lifter, MeetDays};
 use crate::lift::{Lift, PerLift};
+use crate::meet_day::Taken;
 use crate::outcome::{Outcome, OutcomeTally};
 use crate::plan::{Jumps, LiftPlan};
 use crate::rules::{PLATE_STEP, Weight};
@@ -125,15 +126,26 @@ pub fn tradeoff(input: &TradeoffInput) -> Result<Tradeoff, Vec<InputProblem>> {
         input.seed,
         input.bomb_out_cap,
     )?;
-    Ok(sweep(&days, input.goal, input.bomb_out_cap))
+    Ok(sweep(
+        &days,
+        input.goal,
+        input.bomb_out_cap,
+        &Taken::default(),
+    ))
 }
 
 /// How many days the sweep scores at a time, so each lift's bests for a block stay in cache
 /// while every shape adds them up.
 const DAY_BLOCK: usize = 1024;
 
-/// The tradeoff on days already simulated.
-pub(crate) fn sweep(days: &MeetDays, goal: Option<Weight>, bomb_out_cap: Option<f64>) -> Tradeoff {
+/// The tradeoff on days already simulated, with each plan taking the attempts in `taken`,
+/// which `days` must agree with.
+pub(crate) fn sweep(
+    days: &MeetDays,
+    goal: Option<Weight>,
+    bomb_out_cap: Option<f64>,
+    taken: &Taken,
+) -> Tradeoff {
     let mut seen = HashSet::new();
     let candidates: Vec<(PlanShape, PerLift<LiftPlan>)> = plan_family()
         .filter_map(|shape| {
@@ -144,7 +156,7 @@ pub(crate) fn sweep(days: &MeetDays, goal: Option<Weight>, bomb_out_cap: Option<
                 bench: plan(&lifts.bench)?,
                 deadlift: plan(&lifts.deadlift)?,
             };
-            Some((shape, plans))
+            Some((shape, taken.pin_all(&plans)))
         })
         .filter(|(_, plans)| seen.insert(*plans))
         .collect();

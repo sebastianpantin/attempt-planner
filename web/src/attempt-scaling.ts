@@ -10,8 +10,8 @@ import {
   LIFTS,
 } from "./inputs.ts";
 
-const BAR_KG = 20;
-const PLATE_STEP_KG = 2.5;
+export const BAR_KG = 20;
+export const PLATE_STEP_KG = 2.5;
 
 /** The opener and the four jumps of a lift's plan. */
 export const PLAN_FIELDS = [

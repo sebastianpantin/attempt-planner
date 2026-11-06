@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use attempt_sim_wasm::{PlanSearch, estimate_maxes, evaluate, single_changes, tradeoff};
+use attempt_sim_wasm::{PlanSearch, estimate_maxes, evaluate, replan, single_changes, tradeoff};
 use js_sys::JSON;
 use tsify::{Ts, Tsify};
 use wasm_bindgen::JsValue;
@@ -176,4 +176,21 @@ fn an_evaluation_lists_every_total() {
         json.contains(r#""totals":[{"totalKg":550,"share":1}]"#),
         "{json}"
     );
+}
+
+#[wasm_bindgen_test]
+fn replans_from_the_attempts_taken_with_camel_case_fields() {
+    let request = with_fields(
+        r#""goalKg": 550, "taken": [{ "weightKg": 180, "made": true }, { "weightKg": 190, "made": false }]"#,
+    );
+    let json = stringify(replan(parse(&request)).unwrap());
+    assert!(
+        json.starts_with(r#"{"kind":"replanned","result":{"plans":{"squat":{"openerKg":180,"#),
+        "{json}"
+    );
+    assert!(
+        json.contains(r#""next":{"lift":"squat","attempt":3,"weightKg":"#),
+        "{json}"
+    );
+    assert!(json.contains(r#""redrawn":true"#), "{json}");
 }
