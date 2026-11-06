@@ -15,6 +15,7 @@ import {
   byLift,
   describeSetup,
   describeTaken,
+  isComplete,
   lightestNextKg,
   loadMeet,
   loadProblem,
@@ -71,7 +72,8 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
 
   function setLoadProblem(problem: string | undefined) {
     loadProblemText.textContent = problem ?? "";
-    loadInput.toggleAttribute("aria-invalid", problem !== undefined);
+    if (problem) loadInput.setAttribute("aria-invalid", "true");
+    else loadInput.removeAttribute("aria-invalid");
   }
 
   function render() {
@@ -79,9 +81,14 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
     progress.hidden = meet === undefined;
     if (!meet) {
       const { request, missing } = currentPlan();
-      byId("meet-start-plan").textContent =
-        missing || describeSetup(startMeet(request).setup);
-      button("start-meet").disabled = missing !== "";
+      const { setup } = startMeet(request);
+      const needs =
+        missing ||
+        (isComplete(setup)
+          ? ""
+          : "Fill in every attempt and model input in the planner to start a meet.");
+      byId("meet-start-plan").textContent = needs || describeSetup(setup);
+      button("start-meet").disabled = needs !== "";
       return;
     }
     const { taken } = meet;
@@ -180,8 +187,8 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
   const submitReplan = simulationWorker("replan", {
     started: () => {},
     finished(reply, request: ReplanRequest) {
-      if (!meet) return;
       view.removeAttribute("aria-busy");
+      if (!meet) return;
       if ("message" in reply) {
         const failure = `The replan failed: ${reply.message}`;
         byId("meet-problems").replaceChildren(element("li", "", failure));
@@ -198,6 +205,7 @@ export function setUpMeetDay(currentPlan: () => CurrentPlan) {
     saveMeet(localStorage, meet);
     loadEdited = false;
     shownFor = undefined;
+    loadInput.value = "";
     render();
   }
 

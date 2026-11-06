@@ -8,6 +8,7 @@ import {
   bombedOut,
   describeSetup,
   describeTaken,
+  isComplete,
   lightestNextKg,
   loadMeet,
   loadProblem,
@@ -57,6 +58,15 @@ describe("a meet", () => {
     expect(describeSetup(open)).toMatch(
       /^No goal, so the highest average total, any bomb-out risk\./,
     );
+  });
+
+  it("needs every planner input filled in", () => {
+    expect(isComplete(meet.setup)).toBe(true);
+    const plans = {
+      ...meet.setup.plans,
+      bench: { ...meet.setup.plans.bench, openerKg: Number.NaN },
+    };
+    expect(isComplete({ ...meet.setup, plans })).toBe(false);
   });
 
   it("asks to replan with every attempt taken, in order", () => {

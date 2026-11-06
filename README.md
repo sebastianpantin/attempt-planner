@@ -38,7 +38,7 @@ After each attempt the planner replans everything left, the rest of this lift an
 - **Fresh days when few are left.** Below 2,000 agreeing days, a tenth of the 20,000, a chance near 50% would have a standard error over 1.1 points and the search would start to pick plans for their luck. The planner then draws 20,000 new days given the results: the shared and each lift's own day-form draws are weighted on a grid by how likely they make the attempts so far, as the backtest does, and the attempts still to come are rolled as for any day.
 - **Same search.** Finished attempts are fixed in each plan, so a finished lift counts its best (or a bomb-out) on every day, and the search changes only the attempts still to come, starting from the plan and the plan family.
 
-A replan takes about 15 ms, or 25 ms when the days are drawn afresh (`cargo run --release -p attempt-sim --example timings`).
+A replan takes about 15 ms, or 20 ms when the days are drawn afresh (`cargo run --release -p attempt-sim --example timings`).
 
 ### Estimating maxes from past meets
 

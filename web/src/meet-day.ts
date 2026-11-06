@@ -54,6 +54,16 @@ export function describeSetup({
   return `${goal}, ${cap}. Openers: ${format.listOf(openers)} kg.`;
 }
 
+/**
+ * Whether every number in `value` is finite. An empty planner input reads as `NaN`, which
+ * a saved meet would store as `null` and the engine could no longer read after a reload.
+ */
+export function isComplete(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || value === null) return true;
+  return Object.values(value).every(isComplete);
+}
+
 export const replanRequest = ({ setup, taken }: Meet): ReplanRequest => ({
   ...setup,
   taken,

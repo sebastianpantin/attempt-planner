@@ -28,7 +28,7 @@ export function cachedUrls(builtFiles: string[]): string[] {
  * The service worker for a build of `builtFiles` with `page` as its `index.html`, so the
  * page works offline once loaded, mid-meet included. It keeps every file in a cache named
  * after the build, so a new build gets a new cache and the old one goes once no open page
- * uses it. The page itself comes from the network when it answers within
+ * uses it. The page itself comes from the network when it answers successfully within
  * `PAGE_TIMEOUT_MS`, so an online visit gets the latest build; the other files have their
  * content in their names and never change, so they come from the cache first. Matches
  * ignore `Vary`: a server that varies by `Origin` would otherwise miss the cached copy of
@@ -64,7 +64,9 @@ self.addEventListener("fetch", (event) => {
   const cached = (key) =>
     caches.open(CACHE).then((cache) => cache.match(key, { ignoreVary: true }));
   if (request.mode === "navigate") {
-    const fromNetwork = fetch(request);
+    const fromNetwork = fetch(request).then((response) =>
+      response.ok ? response : cached("./").then((hit) => hit || response),
+    );
     const slow = new Promise((resolve) => setTimeout(resolve, PAGE_TIMEOUT_MS))
       .then(() => cached("./"))
       .then((hit) => hit || fromNetwork);
