@@ -6,6 +6,7 @@
 //! which past meets don't show. The opener stands in for that as evidence of the expected
 //! max, and the 2nd and 3rd attempts as evidence of the day max.
 
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use attempt_sim::lift::{Lift, PerLift};
@@ -25,6 +26,90 @@ use crate::stats::is_complete;
 /// 241-point grid's by under 0.0001.
 pub static BACKTEST_GRID: LazyLock<Vec<(f64, f64)>> = LazyLock::new(|| normal_grid(61, 6.0));
 pub static FIT_GRID: LazyLock<Vec<(f64, f64)>> = LazyLock::new(|| normal_grid(31, 6.0));
+
+/// Which grid of day draws to average over: the fit's or the backtest's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Grid {
+    Fit,
+    Backtest,
+}
+
+impl Grid {
+    /// The grid's draws of each part of the day max, from a Student-t with `dof` degrees of
+    /// freedom scaled to unit variance, or normal for infinite `dof`. A t's tails reach
+    /// further, so its grid does too, keeping the spacing of the normal one.
+    pub fn draws(self, dof: f64) -> Cow<'static, [(f64, f64)]> {
+        if dof.is_infinite() {
+            return Cow::Borrowed(match self {
+                Grid::Fit => FIT_GRID.as_slice(),
+                Grid::Backtest => BACKTEST_GRID.as_slice(),
+            });
+        }
+        let count = match self {
+            Grid::Fit => 51,
+            Grid::Backtest => 101,
+        };
+        Cow::Owned(student_t_grid(count, 10.0, dof))
+    }
+}
+
+/// `count` evenly spaced points weighted by a Student-t density with `dof` degrees of
+/// freedom, scaled so that the grid's own variance is 1: the cut-off tails would otherwise
+/// shrink the spread.
+pub fn student_t_grid(count: usize, range: f64, dof: f64) -> Vec<(f64, f64)> {
+    let grid: Vec<(f64, f64)> = normal_grid(count, range)
+        .into_iter()
+        .map(|(z, _)| (z, student_t_density(z, dof)))
+        .collect();
+    let total: f64 = grid.iter().map(|(_, density)| density).sum();
+    let variance: f64 = grid.iter().map(|(z, density)| density * z * z).sum::<f64>() / total;
+    grid.into_iter()
+        .map(|(z, density)| (z / variance.sqrt(), density / total))
+        .collect()
+}
+
+/// The Student-t density at `z`, up to a constant, normal for infinite `dof`.
+pub fn student_t_density(z: f64, dof: f64) -> f64 {
+    if dof.is_infinite() {
+        (-z * z / 2.0).exp()
+    } else {
+        (1.0 + z * z / dof).powf(-(dof + 1.0) / 2.0)
+    }
+}
+
+/// Heavier tails than the planner's model, each neutral at its default: research into
+/// why hard attempts are made more often than the model allows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tails {
+    /// Degrees of freedom of the Student-t that each part of the day max is drawn from,
+    /// scaled to the same spread. Infinite for the planner's normal.
+    pub day_form_dof: f64,
+    /// Each lift's chance of making a load however far it is above the day max, short of a
+    /// technical miss.
+    pub floors: PerLift<f64>,
+    /// Degrees of freedom of the Student-t that a chosen share of the day max is drawn
+    /// from. Infinite for normal.
+    pub choice_dof: f64,
+}
+
+impl Tails {
+    pub const NORMAL: Tails = Tails {
+        day_form_dof: f64::INFINITY,
+        floors: PerLift {
+            squat: 0.0,
+            bench: 0.0,
+            deadlift: 0.0,
+        },
+        choice_dof: f64::INFINITY,
+    };
+}
+
+/// The chance of making `load` on a day max of `day_max`, with a `floor` under the part
+/// that depends on the load.
+fn make_chance(curve: &MakeRateCurve, floor: f64, load: f64, day_max: f64) -> f64 {
+    let strength = curve.make_probability_kg(load, day_max);
+    floor * (1.0 - curve.technical_miss_chance) + (1.0 - floor) * strength
+}
 
 /// How lifters choose their 2nd and 3rd attempts at a lift knowing how the day is going:
 /// at a typical share of their day max, give or take a spread. Taken as evidence, a heavy
@@ -92,8 +177,9 @@ pub fn slots(attempts: &[f64; 3]) -> [usize; 3] {
 
 /// The chance of making each attempt of a meet, in meet order, given every attempt before
 /// it. The day maxes are drawn as the planner draws them: a part shared by the lifts and a
-/// part of their own, each averaged over the grid of normal `draws`. With `choices`, each
-/// 2nd and 3rd attempt is also evidence of the day max before its chance is worked out.
+/// part of their own, each averaged over the grid of `draws`, which [`Grid::draws`] gives
+/// for `tails`. With `choices`, each 2nd and 3rd attempt is also evidence of the day max
+/// before its chance is worked out.
 pub fn sequential_chances(
     draws: &[(f64, f64)],
     curves: &PerLift<MakeRateCurve>,
@@ -101,6 +187,7 @@ pub fn sequential_chances(
     day_form: &DayForm,
     attempts: &PerLift<[f64; 3]>,
     choices: Option<&PerLift<LoadChoice>>,
+    tails: &Tails,
 ) -> PerLift<[f64; 3]> {
     let weights = day_form.draw_weights();
     let n = draws.len();
@@ -129,7 +216,7 @@ pub fn sequential_chances(
         } else {
             Vec::new()
         };
-        let curve = curves.get(lift);
+        let (curve, floor) = (curves.get(lift), *tails.floors.get(lift));
         let slots = slots(attempts.get(lift));
         for (attempt, &kg) in attempts.get(lift).iter().enumerate() {
             let (load, made) = (kg.abs(), kg > 0.0);
@@ -141,7 +228,7 @@ pub fn sequential_chances(
                     for (j, &(_, own_weight)) in draws.iter().enumerate() {
                         let gap = (log_share - log_days[i * n + j]) / choice.spread;
                         let chance = &mut chances.get_mut(lift)[i * n + j];
-                        *chance *= (-gap * gap / 2.0).exp();
+                        *chance *= student_t_density(gap, tails.choice_dof);
                         average += own_weight * *chance;
                     }
                     averaged.get_mut(lift)[i] = average;
@@ -153,7 +240,7 @@ pub fn sequential_chances(
             for (i, &(_, shared_weight)) in draws.iter().enumerate() {
                 let mut average_made = 0.0;
                 for (j, &(_, own_weight)) in draws.iter().enumerate() {
-                    let make = curve.make_probability_kg(load, days[i * n + j]);
+                    let make = make_chance(curve, floor, load, days[i * n + j]);
                     let chance = &mut chances.get_mut(lift)[i * n + j];
                     average_made += own_weight * *chance * make;
                     *chance *= if made { make } else { 1.0 - make };
@@ -265,6 +352,53 @@ mod tests {
     }
 
     #[test]
+    fn a_student_t_grid_keeps_the_spread_and_puts_more_weight_far_out() {
+        let moment = |grid: &[(f64, f64)], power: i32| {
+            grid.iter().map(|(z, w)| w * z.powi(power)).sum::<f64>()
+        };
+        let beyond = |grid: &[(f64, f64)], far: f64| {
+            grid.iter()
+                .filter(|(z, _)| z.abs() > far)
+                .map(|(_, w)| w)
+                .sum::<f64>()
+        };
+        let t = Grid::Backtest.draws(4.0);
+        assert!(close(moment(&t, 0), 1.0));
+        assert!(moment(&t, 1).abs() < 1e-9);
+        assert!(close(moment(&t, 2), 1.0));
+        assert!(beyond(&t, 3.0) > 2.0 * beyond(&BACKTEST_GRID, 3.0));
+        assert_eq!(*Grid::Fit.draws(f64::INFINITY), *FIT_GRID);
+    }
+
+    #[test]
+    fn a_floor_keeps_a_chance_of_making_a_load_far_above_the_day_max() {
+        let curves = PerLift::from_fn(|_| CURVE);
+        let expected = PerLift::from_fn(|_| 100.0);
+        let attempts = PerLift::from_fn(|_| [90.0, 100.0, 150.0]);
+        let day_form = DayForm {
+            spread: 0.0,
+            max_uncertainty: 0.0,
+            correlation: 0.4,
+        };
+        let tails = Tails {
+            floors: PerLift::from_fn(|_| 0.1),
+            ..Tails::NORMAL
+        };
+        let chances = sequential_chances(
+            &BACKTEST_GRID,
+            &curves,
+            &expected,
+            &day_form,
+            &attempts,
+            None,
+            &tails,
+        );
+        let at_the_day_max = 0.1 * 0.98 + 0.9 * CURVE.make_probability_kg(100.0, 100.0);
+        assert!(close(chances.squat[1], at_the_day_max));
+        assert!((chances.squat[2] - 0.1 * 0.98).abs() < 1e-6);
+    }
+
+    #[test]
     fn names_each_attempt_by_whether_the_one_before_was_made() {
         assert_eq!(slots(&[100.0, 105.0, -110.0]), [0, 1, 3]);
         assert_eq!(slots(&[-100.0, 100.0, 105.0]), [0, 2, 3]);
@@ -288,6 +422,7 @@ mod tests {
             &day_form,
             &attempts,
             None,
+            &Tails::NORMAL,
         );
         for lift in Lift::ALL {
             for (chance, kg) in chances.get(lift).iter().zip(attempts.get(lift)) {
@@ -321,6 +456,7 @@ mod tests {
                 &day_form,
                 &attempts,
                 None,
+                &Tails::NORMAL,
             )
             .bench[0]
         };
@@ -351,6 +487,7 @@ mod tests {
                 &day_form,
                 &attempts,
                 choices,
+                &Tails::NORMAL,
             )
             .squat[1]
         };
@@ -369,6 +506,7 @@ mod tests {
                 &day_form,
                 &attempts,
                 Some(&choices),
+                &Tails::NORMAL,
             );
             chances.squat[2]
         };

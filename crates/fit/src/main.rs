@@ -1,9 +1,11 @@
 //! Fits the planner's default make-rate curve to OpenPowerlifting results.
 //!
-//! Usage: `attempt-fit [--federation NAME] [--sex M|F] [--backtest] CSV`, where CSV is the
-//! OpenPowerlifting bulk CSV from https://data.openpowerlifting.org, unzipped.
-//! `--federation IPF` keeps only meets of the IPF and its member federations, and `--sex F`
-//! only women's entries. `--backtest` fits to nine lifters in ten and scores the
+//! Usage: `attempt-fit [--federation NAME] [--sex M|F] [--tails LIST] [--backtest] CSV`,
+//! where CSV is the OpenPowerlifting bulk CSV from https://data.openpowerlifting.org,
+//! unzipped. `--federation IPF` keeps only meets of the IPF and its member federations, and
+//! `--sex F` only women's entries. `--tails day-form,floor,load-choice` also fits any of
+//! the heavier tails: day form from a Student-t, a floor under the make-rate curve, and
+//! chosen loads from a Student-t. `--backtest` fits to nine lifters in ten and scores the
 //! predictions on the latest meet of the rest.
 
 use std::error::Error;
@@ -18,6 +20,7 @@ use attempt_fit::backtest::{
 use attempt_fit::calibrate::MakeRates;
 use attempt_fit::data::{Entry, Filter, raw_full_power_entries};
 use attempt_fit::fitted::{Fitted, fit};
+use attempt_fit::likelihood::TailsToFit;
 use attempt_fit::progress::ProgressFit;
 use attempt_sim::lift::Lift;
 use attempt_sim::past_meets::{EXPERIENCE_GROUPS, PROGRESS, Progress};
@@ -26,6 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let (mut federation, mut sex, mut path) = (None, None, None);
     let mut run_backtest = false;
+    let mut tails = TailsToFit::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--federation" => {
@@ -36,6 +40,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "--sex" => sex = Some(args.next().ok_or("--sex needs M or F")?),
             "--backtest" => run_backtest = true,
+            "--tails" => {
+                let list = args
+                    .next()
+                    .ok_or("--tails needs day-form, floor or load-choice")?;
+                for tail in list.split(',') {
+                    match tail {
+                        "day-form" => tails.day_form = true,
+                        "floor" => tails.floor = true,
+                        "load-choice" => tails.load_choice = true,
+                        _ => return Err(format!("no tail called {tail}").into()),
+                    }
+                }
+            }
             _ => path = Some(PathBuf::from(arg)),
         }
     }
@@ -51,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (held_out, fitted_to): (Vec<Entry>, Vec<Entry>) = entries
         .into_iter()
         .partition(|entry| run_backtest && is_held_out(&entry.lifter));
-    let fitted = fit(&fitted_to)?;
+    let fitted = fit(&fitted_to, tails)?;
     print_fit(&fitted);
     println!("fitted in {:.1} s", started.elapsed().as_secs_f64());
     if run_backtest {
@@ -129,6 +146,16 @@ fn print_fit(fitted: &Fitted) {
             choice.spread * 100.0
         );
     }
+    let tails = attempts.tails;
+    println!(
+        "  day form t degrees of freedom {:.2}, load choice t degrees of freedom {:.2}, floors \
+         {:.2}% / {:.2}% / {:.2}%",
+        tails.day_form_dof,
+        tails.choice_dof,
+        tails.floors.squat * 100.0,
+        tails.floors.bench * 100.0,
+        tails.floors.deadlift * 100.0
+    );
 }
 
 /// Prints the fitted progress as `PROGRESS` in the engine takes it, rounded as there, and

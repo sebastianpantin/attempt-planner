@@ -13,7 +13,7 @@ use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::minimize::minimize_to;
 use attempt_sim::model::MakeRateCurve;
 
-use crate::attempts::{Estimates, FIT_GRID, LoadChoice, Meet, every_lift, sequential_chances};
+use crate::attempts::{Estimates, Grid, LoadChoice, Meet, Tails, every_lift, sequential_chances};
 use crate::backtest::Score;
 use crate::fitted::Model;
 use crate::parallel::{filter_map_in_parallel, in_parallel};
@@ -35,12 +35,40 @@ const FIRST_CHOICE: LoadChoice = LoadChoice {
     log_shares: [-0.05, -0.1, -0.01, -0.05],
     spread: 0.04,
 };
+/// Where the search for each heavier tail starts, when it is fitted.
+const FIRST_DOF: f64 = 6.0;
+const FIRST_FLOOR: f64 = 0.03;
+
+/// Which of the heavier [`Tails`] the fit searches for. The rest stay normal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TailsToFit {
+    pub day_form: bool,
+    pub floor: bool,
+    pub load_choice: bool,
+}
+
+impl TailsToFit {
+    fn start(&self) -> Tails {
+        let mut tails = Tails::NORMAL;
+        if self.day_form {
+            tails.day_form_dof = FIRST_DOF;
+        }
+        if self.floor {
+            tails.floors = PerLift::from_fn(|_| FIRST_FLOOR);
+        }
+        if self.load_choice {
+            tails.choice_dof = FIRST_DOF;
+        }
+        tails
+    }
+}
 
 /// The model and load choices fitted to real attempts.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AttemptFit {
     pub model: Model,
     pub load_choices: PerLift<LoadChoice>,
+    pub tails: Tails,
     /// Lifters whose latest meets the fit scored.
     pub lifters: usize,
     /// Mean log loss of their attempts under the fit.
@@ -61,12 +89,15 @@ pub struct ScoredMeet {
 pub struct Params {
     pub model: Model,
     pub choices: PerLift<LoadChoice>,
+    pub tails: Tails,
 }
 
 /// One lift's parameters as searched, so that every point is valid: the log steepness,
-/// the square root of the technical-miss chance, the log shares of the load choice and
-/// its log spread.
-type LiftPoint = [f64; 7];
+/// the square root of the technical-miss chance, the log shares of the load choice, its
+/// log spread and the square root of the floor.
+type LiftPoint = [f64; 8];
+/// Each lift's search steps, in [`LiftPoint`] order.
+const LIFT_STEPS: LiftPoint = [0.2, 0.05, 0.02, 0.02, 0.02, 0.02, 0.2, 0.1];
 
 impl Params {
     fn point(&self, lift: Lift) -> LiftPoint {
@@ -81,11 +112,12 @@ impl Params {
             c,
             d,
             choice.spread.ln(),
+            self.tails.floors.get(lift).sqrt(),
         ]
     }
 
     fn with(&self, lift: Lift, point: LiftPoint) -> Self {
-        let [steepness, root_chance, a, b, c, d, spread] = point;
+        let [steepness, root_chance, a, b, c, d, spread, root_floor] = point;
         let mut params = *self;
         *params.model.curves.get_mut(lift) = MakeRateCurve {
             ratio_at_half: 1.0,
@@ -96,21 +128,72 @@ impl Params {
             log_shares: [a, b, c, d],
             spread: spread.exp(),
         };
+        *params.tails.floors.get_mut(lift) = (root_floor * root_floor).min(0.99);
         params
+    }
+
+    /// Searches the first `N` of the lift's parameters near where they are, holding the
+    /// rest.
+    fn fit_lift<const N: usize>(&self, lift: Lift, meets: &[ScoredMeet]) -> Self {
+        let full = self.point(lift);
+        let with = |point: [f64; N]| {
+            let mut full = full;
+            full[..N].copy_from_slice(&point);
+            self.with(lift, full)
+        };
+        let point = minimize_to(
+            |point| log_loss(&with(point), meets),
+            full[..N]
+                .try_into()
+                .expect("N is at most the point's length"),
+            LIFT_STEPS[..N]
+                .try_into()
+                .expect("N is at most the steps' length"),
+            TOLERANCE,
+            MAX_EVALUATIONS,
+        );
+        with(point)
+    }
+
+    /// Searches one degree of freedom of the tails, by the log of how far it is above
+    /// `least`, holding the rest.
+    fn fit_dof(
+        &self,
+        meets: &[ScoredMeet],
+        least: f64,
+        dof: impl Fn(&mut Tails) -> &mut f64,
+    ) -> Self {
+        let with = |[log_excess]: [f64; 1]| {
+            let mut params = *self;
+            *dof(&mut params.tails) = least + log_excess.exp();
+            params
+        };
+        let mut tails = self.tails;
+        let start = (*dof(&mut tails) - least).ln();
+        let point = minimize_to(
+            |point| log_loss(&with(point), meets),
+            [start],
+            [0.3],
+            TOLERANCE,
+            MAX_EVALUATIONS,
+        );
+        with(point)
     }
 }
 
 /// Mean log loss of every attempt of `meets` under `params`.
 pub fn log_loss(params: &Params, meets: &[ScoredMeet]) -> f64 {
     let model = &params.model;
+    let draws = Grid::Fit.draws(params.tails.day_form_dof);
     in_parallel(meets, |meet| {
         let chances = sequential_chances(
-            &FIT_GRID,
+            &draws,
             &model.curves,
             &meet.expected_kg,
             &model.day_form,
             &meet.attempts,
             Some(&params.choices),
+            &params.tails,
         );
         let mut score = Score::default();
         for lift in Lift::ALL {
@@ -124,20 +207,25 @@ pub fn log_loss(params: &Params, meets: &[ScoredMeet]) -> f64 {
 }
 
 /// The parameters near `start` under which `meets` are most likely: each lift in turn,
-/// holding the rest, as the lifts only meet through the shared part of the day. One pass
-/// over the lifts is enough here, as fitting a lift barely moves the best fit of the
-/// others; [`fit_to_attempts`] repeats it as the estimated maxes move.
-pub fn fit_to_meets(start: &Params, meets: &[ScoredMeet]) -> Params {
+/// holding the rest, as the lifts only meet through the shared part of the day, then each
+/// tail in `tails` shared by the lifts. One pass is enough here, as fitting a lift barely
+/// moves the best fit of the others; [`fit_to_attempts`] repeats it as the estimated maxes
+/// move.
+pub fn fit_to_meets(start: &Params, meets: &[ScoredMeet], tails: TailsToFit) -> Params {
     let mut params = *start;
     for lift in Lift::ALL {
-        let point = minimize_to(
-            |point| log_loss(&params.with(lift, point), meets),
-            params.point(lift),
-            [0.2, 0.05, 0.02, 0.02, 0.02, 0.02, 0.2],
-            TOLERANCE,
-            MAX_EVALUATIONS,
-        );
-        params = params.with(lift, point);
+        params = if tails.floor {
+            params.fit_lift::<8>(lift, meets)
+        } else {
+            params.fit_lift::<7>(lift, meets)
+        };
+    }
+    // A t with 2 degrees of freedom or fewer has no variance to scale to the day form's.
+    if tails.day_form {
+        params = params.fit_dof(meets, 2.0, |tails| &mut tails.day_form_dof);
+    }
+    if tails.load_choice {
+        params = params.fit_dof(meets, 0.0, |tails| &mut tails.choice_dof);
     }
     params
 }
@@ -155,22 +243,24 @@ fn scored_meets(model: &Model, lifters: &[&[Meet]]) -> Vec<ScoredMeet> {
     })
 }
 
-/// Fits the model and load choices to the latest meets of some of `lifters`, each lifter's
-/// complete meets, starting from `start`, whose day form stays.
-pub fn fit_to_attempts(start: &Model, lifters: &[Vec<Meet>]) -> AttemptFit {
+/// Fits the model, load choices and `tails` to the latest meets of some of `lifters`, each
+/// lifter's complete meets, starting from `start`, whose day form stays.
+pub fn fit_to_attempts(start: &Model, lifters: &[Vec<Meet>], tails: TailsToFit) -> AttemptFit {
     let step = lifters.len().div_ceil(FIT_LIFTERS).max(1);
     let sample: Vec<&[Meet]> = lifters.iter().step_by(step).map(Vec::as_slice).collect();
     let mut params = Params {
         model: *start,
         choices: PerLift::from_fn(|_| FIRST_CHOICE),
+        tails: tails.start(),
     };
     let mut best: Option<AttemptFit> = None;
     for _ in 0..MOST_ROUNDS {
         let meets = scored_meets(&params.model, &sample);
-        params = fit_to_meets(&params, &meets);
+        params = fit_to_meets(&params, &meets, tails);
         let fit = AttemptFit {
             model: params.model,
             load_choices: params.choices,
+            tails: params.tails,
             lifters: meets.len(),
             log_loss: log_loss(&params, &meets),
         };
@@ -187,6 +277,7 @@ pub fn fit_to_attempts(start: &Model, lifters: &[Vec<Meet>]) -> AttemptFit {
     best.unwrap_or(AttemptFit {
         model: params.model,
         load_choices: params.choices,
+        tails: params.tails,
         lifters: 0,
         log_loss: f64::NAN,
     })
@@ -200,7 +291,7 @@ mod tests {
     use rand_xoshiro::Xoshiro256PlusPlus;
 
     use super::*;
-    use crate::attempts::slots;
+    use crate::attempts::{FIT_GRID, slots};
 
     const EXPECTED_KG: PerLift<f64> = PerLift {
         squat: 180.0,
@@ -228,6 +319,7 @@ mod tests {
                 log_shares: [0.97, 0.95, 1.0, 0.98].map(f64::ln),
                 spread: 0.02,
             }),
+            tails: Tails::NORMAL,
         }
     }
 
@@ -277,6 +369,7 @@ mod tests {
             &model.day_form,
             &meet.attempts,
             Some(&params.choices),
+            &params.tails,
         );
         Lift::ALL
             .iter()
@@ -298,7 +391,8 @@ mod tests {
         }
         start.choices = PerLift::from_fn(|_| FIRST_CHOICE);
         // Twice from so far off, as the fit does once for each estimate of the maxes.
-        let fit = fit_to_meets(&fit_to_meets(&start, &meets), &meets);
+        let tails = TailsToFit::default();
+        let fit = fit_to_meets(&fit_to_meets(&start, &meets, tails), &meets, tails);
         assert!(log_loss(&fit, &meets) <= log_loss(&truth, &meets));
         let gaps: Vec<f64> = meets
             .iter()

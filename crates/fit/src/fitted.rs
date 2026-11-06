@@ -7,7 +7,7 @@ use crate::attempts::lifters_meets;
 use crate::calibrate::{Calibration, calibrate_lifts};
 use crate::data::Entry;
 use crate::history::{MeetToMeet, meet_to_meet};
-use crate::likelihood::{AttemptFit, fit_to_attempts};
+use crate::likelihood::{AttemptFit, TailsToFit, fit_to_attempts};
 use crate::progress::{ProgressFit, fit_progress};
 use crate::stats::{AttemptStats, attempt_stats};
 
@@ -26,7 +26,8 @@ pub struct Fitted {
     pub attempts: AttemptFit,
 }
 
-pub fn fit(entries: &[Entry]) -> Result<Fitted, String> {
+/// Fits every part of the model to `entries`, with the heavier `tails` asked for.
+pub fn fit(entries: &[Entry], tails: TailsToFit) -> Result<Fitted, String> {
     let [squat, bench, deadlift] = Lift::ALL.map(|lift| {
         attempt_stats(entries.iter().map(|entry| *entry.attempts.get(lift)))
             .ok_or(format!("not enough {lift} attempts"))
@@ -52,7 +53,7 @@ pub fn fit(entries: &[Entry]) -> Result<Fitted, String> {
         calibrations,
         history,
         progress,
-        attempts: fit_to_attempts(&calibrated, &lifters),
+        attempts: fit_to_attempts(&calibrated, &lifters, tails),
     })
 }
 

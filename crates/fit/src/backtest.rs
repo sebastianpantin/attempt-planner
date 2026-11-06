@@ -17,7 +17,7 @@ use attempt_sim::lift::{Lift, PerLift};
 use attempt_sim::model::DayForm;
 
 use crate::attempts::{
-    BACKTEST_GRID, Estimates, Meet, every_lift, lifters_meets, sequential_chances, slots,
+    Estimates, Grid, Meet, every_lift, lifters_meets, sequential_chances, slots,
 };
 use crate::data::Entry;
 use crate::fitted::Fitted;
@@ -199,7 +199,7 @@ fn add_meet(
 }
 
 /// Scores one lifter's latest meet from the meets before it, in each of [`SCENARIOS`].
-fn score_lifter(fitted: &Fitted, meets: &[Meet]) -> Backtest {
+fn score_lifter(fitted: &Fitted, draws: &[(f64, f64)], meets: &[Meet]) -> Backtest {
     let mut backtest = Backtest::default();
     let model = fitted.model();
     let (latest, past) = meets.split_last().expect("two or more meets");
@@ -237,12 +237,13 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet]) -> Backtest {
             .chosen_loads
             .then_some(&fitted.attempts.load_choices);
         let chances = sequential_chances(
-            &BACKTEST_GRID,
+            draws,
             &model.curves,
             &expected,
             &day_form,
             &latest.attempts,
             choices,
+            &fitted.attempts.tails,
         );
         add_meet(scores, &latest.attempts, &chances, &past_misses);
     }
@@ -260,7 +261,8 @@ fn score_lifter(fitted: &Fitted, meets: &[Meet]) -> Backtest {
 /// Scores the model fitted to `fitted` on the lifters in `held_out`.
 pub fn backtest(fitted: &Fitted, held_out: &[Entry]) -> Backtest {
     let lifters = lifters_meets(held_out);
-    in_parallel(&lifters, |meets| score_lifter(fitted, meets))
+    let draws = Grid::Backtest.draws(fitted.attempts.tails.day_form_dof);
+    in_parallel(&lifters, |meets| score_lifter(fitted, &draws, meets))
 }
 
 #[cfg(test)]

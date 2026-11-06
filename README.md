@@ -139,6 +139,26 @@ The refit beats the page's curves on log loss, 0.454 against 0.489 with chosen a
 
 Its curves are much softer than the page's: steepness 22 for the squat, 33 for the bench and 28 for the deadlift, against 56, 94 and 109. The soft curves likely soak up what the model leaves out, such as lifters who choose loads for reasons other than the day, so the page keeps the calibrated curves for now.
 
+#### Heavier tails
+
+Hard attempts are made more often than the refit allows, so `--tails` also fits any of three heavier tails, on the fitting lifters only:
+
+- `day-form`: each part of the day max drawn from a Student-t, scaled to the same spread, with fitted degrees of freedom.
+- `floor`: each lift's chance of making a load however far above the day max, short of a technical miss: (1 − technical miss) × (floor + (1 − floor) × curve).
+- `load-choice`: a chosen 2nd or 3rd attempt's share of the day max drawn from a Student-t instead of a normal.
+
+With chosen attempts, on the same held-out lifters:
+
+| Tails | Log loss | Worst calibration bin | Fitted |
+| --- | --- | --- | --- |
+| None (the refit) | 0.454 | under 50%: 45.3% made, 37.8% predicted | |
+| `day-form` | 0.454 | under 50%: 45.4% made, 37.9% predicted | 13 degrees of freedom |
+| `floor` | 0.447 | 70–80%: 72.2% made, 74.4% predicted | floors 52% / 40% / 47% |
+| `load-choice` | 0.454 | under 50%: 45.7% made, 37.7% predicted | no finite degrees of freedom |
+| `floor,day-form` | 0.447 | 70–80%: 72.9% made, 74.4% predicted | floors 54% / 41% / 48%, 17 degrees of freedom |
+
+A t day form and t load choices change nothing: the fit takes the day form back to near normal and the load choices all the way. The floor fixes the calibration and ties the load-blind baseline, but not with a plausible curve. A 40–50% chance of making any load, however heavy, says the load barely matters, and the curves under it swing between fits: squat steepness 30, 19 and 14, and bench 76, 82 and 137, for all lifters, men and women. Women's attempts under 50% are made 44.7% of the time against 41.1% predicted. None of the three ships to the page.
+
 The engine takes plain data in and out, with no browser code, so other front ends can reuse it.
 
 ## Layout
